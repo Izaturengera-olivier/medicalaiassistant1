@@ -3,7 +3,7 @@
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
 
-from .models import Medication, MedicationInteraction, Prescription, PrescriptionMedication
+from .models import Medication, MedicationInteraction, Prescription
 
 
 @admin.register(Medication)
@@ -30,16 +30,7 @@ class MedicationInteractionAdmin(admin.ModelAdmin):
 class PrescriptionAdmin(admin.ModelAdmin):
     """Admin interface for Prescription."""
 
-    list_display = ["id", "consultation", "prescribing_doctor", "status", "prescribed_date"]
-    list_filter = ["status", "prescribed_date"]
-    search_fields = ["consultation__patient__email", "prescribing_doctor__email"]
+    list_display = ["id", "patient", "medication", "prescribing_doctor", "status", "prescribed_at"]
+    list_filter = ["status", "prescribed_at"]
+    search_fields = ["patient__email", "medication__name", "prescribing_doctor__email"]
     readonly_fields = ["created_at", "updated_at"]
-
-
-@admin.register(PrescriptionMedication)
-class PrescriptionMedicationAdmin(admin.ModelAdmin):
-    """Admin interface for PrescriptionMedication."""
-
-    list_display = ["prescription", "medication", "dosage", "frequency"]
-    search_fields = ["medication__name", "prescription__id"]
-    readonly_fields = ["created_at"]

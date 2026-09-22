@@ -166,65 +166,52 @@ class Prescription(models.Model):
         Consultation,
         on_delete=models.CASCADE,
         related_name="prescriptions",
-        verbose_name=_("consultation")
+        verbose_name=_("consultation"),
+        null=True,
+        blank=True
+    )
+    patient = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="prescriptions",
+        limit_choices_to={"role": "PATIENT"},
+        verbose_name=_("patient"),
+        null=True,
+        blank=True
     )
     prescribing_doctor = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
         null=True,
+        blank=True,
         related_name="prescribed_medications",
         limit_choices_to={"role": "DOCTOR"},
         verbose_name=_("prescribing doctor")
     )
-    prescribed_date = models.DateField(_("prescribed date"), auto_now_add=True)
-    status = models.CharField(
-        max_length=20,
-        choices=PrescriptionStatus.CHOICES,
-        default=PrescriptionStatus.ACTIVE,
-        verbose_name=_("status")
-    )
-    notes = models.TextField(_("notes"), blank=True, help_text=_("Additional prescription notes"))
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "prescriptions"
-        verbose_name = _("prescription")
-        verbose_name_plural = _("prescriptions")
-        ordering = ["-prescribed_date"]
-
-    def __str__(self):
-        return f"Prescription #{self.id} - Consultation #{self.consultation.id}"
-
-
-class PrescriptionMedication(models.Model):
-    """Individual medications within a prescription."""
-
-    prescription = models.ForeignKey(
-        Prescription,
-        on_delete=models.CASCADE,
-        related_name="medications",
-        verbose_name=_("prescription")
-    )
     medication = models.ForeignKey(
         Medication,
         on_delete=models.PROTECT,
-        related_name="prescription_items",
-        verbose_name=_("medication")
+        related_name="prescriptions",
+        verbose_name=_("medication"),
+        null=True,
+        blank=True
     )
     dosage = models.CharField(
         _("dosage"),
         max_length=100,
+        blank=True,
         help_text=_("e.g., '500mg', '10mg', '1 tablet'")
     )
     frequency = models.CharField(
         _("frequency"),
         max_length=100,
+        blank=True,
         help_text=_("e.g., 'twice daily', 'every 8 hours', 'once daily'")
     )
     duration = models.CharField(
         _("duration"),
         max_length=100,
+        blank=True,
         help_text=_("e.g., '7 days', '2 weeks', '30 days'")
     )
     instructions = models.TextField(
@@ -232,13 +219,27 @@ class PrescriptionMedication(models.Model):
         blank=True,
         help_text=_("Specific instructions for taking this medication")
     )
+    prescribed_at = models.DateTimeField(_("prescribed at"), auto_now_add=True)
+    status = models.CharField(
+        max_length=20,
+        choices=PrescriptionStatus.CHOICES,
+        default=PrescriptionStatus.ACTIVE,
+        verbose_name=_("status")
+    )
+    pharmacist_notes = models.TextField(_("pharmacist notes"), blank=True)
+    interaction_flags = models.JSONField(
+        _("interaction flags"),
+        default=list,
+        blank=True
+    )
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "prescription_medications"
-        verbose_name = _("prescription medication")
-        verbose_name_plural = _("prescription medications")
-        ordering = ["prescription", "id"]
+        db_table = "prescriptions"
+        verbose_name = _("prescription")
+        verbose_name_plural = _("prescriptions")
+        ordering = ["-prescribed_at"]
 
     def __str__(self):
-        return f"{self.medication.name} - {self.dosage}, {self.frequency}"
+        return f"Prescription #{self.id} - {self.medication.name} for {self.patient.get_full_name()}"

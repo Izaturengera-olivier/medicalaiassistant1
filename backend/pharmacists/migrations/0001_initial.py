@@ -10,29 +10,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('medications', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
-    operations = [
-        migrations.CreateModel(
-            name='PharmacistReview',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('notes', models.TextField(blank=True, help_text="Pharmacist's notes about the prescription", verbose_name='notes')),
-                ('interaction_flags', models.JSONField(blank=True, default=list, help_text='Potential medication interactions detected', verbose_name='interaction flags')),
-                ('allergy_flags', models.JSONField(blank=True, default=list, help_text='Potential allergy issues detected', verbose_name='allergy flags')),
-                ('recommendations', models.TextField(blank=True, help_text="Pharmacist's recommendations", verbose_name='recommendations')),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('updated_at', models.DateTimeField(auto_now=True)),
-                ('pharmacist', models.ForeignKey(limit_choices_to={'role': 'PHARMACIST'}, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='pharmacist_reviews', to=settings.AUTH_USER_MODEL, verbose_name='pharmacist')),
-                ('prescription', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='pharmacist_review', to='medications.prescription', verbose_name='prescription')),
-            ],
-            options={
-                'verbose_name': 'pharmacist review',
-                'verbose_name_plural': 'pharmacist reviews',
-                'db_table': 'pharmacist_reviews',
-                'ordering': ['-created_at'],
-            },
-        ),
-    ]
+    operations = []
