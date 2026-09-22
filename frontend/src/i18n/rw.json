@@ -1,0 +1,15 @@
+{
+  "appName": "Ubufasha mu Gufata Ibyemezo by'Ubuvuzi",
+  "tagline": "Amakuru y'ubuzima n'ubufasha ku buzima. Ntabwo asimbura muganga cyangwa umuforomo w'imiti.",
+  "nav": { "home": "Ahabanza", "login": "Injira", "register": "Iyandikishe" },
+  "home": {
+    "title": "Ubufasha mu Gufata Ibyemezo by'Ubuvuzi",
+    "intro": "Sobanura ibimenyetso mu ndimi zisanzwe. Sisitemu itegura amakuru, ibaza ibibazo bikurikira, kandi ikurura amakuru ku nsoko zemewe. Diagnosis n'imiti biguma ku buzima bwa kinyamwuga.",
+    "disclaimer": "Iyi porogaramu ntigira diagnosis kandi ntiyemeza imiti yonyine."
+  },
+  "auth": {
+    "loginTitle": "Injira",
+    "registerTitle": "Fungura konti y'umurwayi",
+    "comingSoon": "Kwemeza umukoresha bikorwa mu gice cya 3."
+  }
+}

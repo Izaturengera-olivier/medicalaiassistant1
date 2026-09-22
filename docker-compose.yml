@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: cds
+      POSTGRES_USER: cds_user
+      POSTGRES_PASSWORD: cds_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - cds_pg_data:/var/lib/postgresql/data
+
+volumes:
+  cds_pg_data:

@@ -1,0 +1,15 @@
+{
+  "appName": "Clinical Decision Support",
+  "tagline": "Health information and professional decision support. Not a replacement for a doctor or pharmacist.",
+  "nav": { "home": "Home", "login": "Log in", "register": "Register" },
+  "home": {
+    "title": "Clinical Decision Support",
+    "intro": "Describe symptoms in everyday language. The system organizes information, asks follow-up questions, and retrieves approved medical sources. Final diagnosis and prescribing stay with qualified professionals.",
+    "disclaimer": "This application does not diagnose conditions or independently prescribe medication."
+  },
+  "auth": {
+    "loginTitle": "Log in",
+    "registerTitle": "Create a patient account",
+    "comingSoon": "Authentication is implemented in Phase 3."
+  }
+}
