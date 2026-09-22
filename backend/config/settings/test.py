@@ -8,3 +8,14 @@ DATABASES = {
         "NAME": ":memory:",
     }
 }
+
+# Test-specific settings
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.MD5PasswordHasher",
+]
+
+# Disable logging during tests
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": True,
+}
