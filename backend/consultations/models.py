@@ -39,6 +39,11 @@ class Consultation(models.Model):
         _("chief complaint"),
         help_text=_("Primary reason for consultation")
     )
+    doctor_notes = models.TextField(_("doctor notes"), blank=True)
+    diagnosis = models.TextField(_("diagnosis"), blank=True)
+    treatment_recommendation = models.TextField(_("treatment recommendation"), blank=True)
+    follow_up_required = models.BooleanField(_("follow-up required"), default=False)
+    ai_assessment_accepted = models.BooleanField(_("AI assessment accepted"), default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField(null=True, blank=True)
