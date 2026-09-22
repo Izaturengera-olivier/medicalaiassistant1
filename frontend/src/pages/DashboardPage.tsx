@@ -51,17 +51,35 @@ export function Dashboard() {
       
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">
-          <div className="border-4 border-dashed border-gray-200 rounded-lg h-96 flex items-center justify-center">
-            <div className="text-center">
-              <h2 className="text-2xl font-semibold text-gray-900 mb-2">
-                Welcome to your Dashboard
-              </h2>
-              <p className="text-gray-600">
-                You are logged in as {user?.role}
-              </p>
-              <p className="text-sm text-gray-500 mt-4">
-                Dashboard functionality will be implemented in subsequent phases.
-              </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="border-4 border-dashed border-gray-200 rounded-lg h-96 flex items-center justify-center bg-white">
+              <div className="text-center">
+                <h2 className="text-2xl font-semibold text-gray-900 mb-2">
+                  Welcome to your Dashboard
+                </h2>
+                <p className="text-gray-600">
+                  You are logged in as {user?.role}
+                </p>
+                <p className="text-sm text-gray-500 mt-4">
+                  Dashboard functionality will be implemented in subsequent phases.
+                </p>
+              </div>
+            </div>
+            <div className="border-4 border-dashed border-blue-200 rounded-lg h-96 flex items-center justify-center bg-blue-50">
+              <div className="text-center">
+                <h2 className="text-2xl font-semibold text-gray-900 mb-2">
+                  AI Consultation Assistant
+                </h2>
+                <p className="text-gray-600 mb-4">
+                  Get AI-powered symptom analysis and medical information
+                </p>
+                <a
+                  href="/chat"
+                  className="inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  Start AI Chat
+                </a>
+              </div>
             </div>
           </div>
         </div>

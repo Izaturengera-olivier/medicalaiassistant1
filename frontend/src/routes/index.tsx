@@ -3,6 +3,7 @@ import { LoginPage } from "../pages/auth/LoginPage";
 import { RegisterPage } from "../pages/auth/RegisterPage";
 import { HomePage } from "../pages/HomePage";
 import { Dashboard } from "../pages/DashboardPage";
+import { ChatInterface } from "../components/ChatInterface";
 import { AuthProvider } from "../context/AuthContext";
 
 export const router = createBrowserRouter([
@@ -23,6 +24,14 @@ export const router = createBrowserRouter([
     element: (
       <AuthProvider>
         <Dashboard />
+      </AuthProvider>
+    ),
+  },
+  {
+    path: "/chat",
+    element: (
+      <AuthProvider>
+        <ChatInterface />
       </AuthProvider>
     ),
   },
