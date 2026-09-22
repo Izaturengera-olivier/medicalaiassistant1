@@ -4,7 +4,22 @@ import { RegisterPage } from "../pages/auth/RegisterPage";
 import { HomePage } from "../pages/HomePage";
 import { Dashboard } from "../pages/DashboardPage";
 import { ChatInterface } from "../components/ChatInterface";
-import { AuthProvider } from "../context/AuthContext";
+import { AuthProvider, useAuth } from "../context/AuthContext";
+
+// Protected Route Component
+const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+  const { isAuthenticated, loading } = useAuth();
+  
+  if (loading) {
+    return <div>Loading...</div>;
+  }
+  
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+  
+  return <>{children}</>;
+};
 
 export const router = createBrowserRouter([
   {
@@ -20,18 +35,22 @@ export const router = createBrowserRouter([
     element: <RegisterPage />,
   },
   {
-    path: "/dashboard",
+    path: "/chat",
     element: (
       <AuthProvider>
-        <Dashboard />
+        <ProtectedRoute>
+          <ChatInterface />
+        </ProtectedRoute>
       </AuthProvider>
     ),
   },
   {
-    path: "/chat",
+    path: "/dashboard",
     element: (
       <AuthProvider>
-        <ChatInterface />
+        <ProtectedRoute>
+          <Dashboard />
+        </ProtectedRoute>
       </AuthProvider>
     ),
   },
