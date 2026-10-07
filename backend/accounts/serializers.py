@@ -13,8 +13,26 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["id", "email", "first_name", "last_name", "role", "is_verified", "created_at", "updated_at"]
-        read_only_fields = ["id", "is_verified", "created_at", "updated_at"]
+        fields = ["id", "email", "first_name", "last_name", "role", "is_verified", "is_active", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class AdminUserCreateSerializer(serializers.ModelSerializer):
+    """Serializer for admin user creation."""
+
+    password = serializers.CharField(write_only=True, required=True, min_length=6)
+
+    class Meta:
+        model = User
+        fields = ["email", "first_name", "last_name", "role", "password", "is_verified", "is_active"]
+
+    def create(self, validated_data):
+        password = validated_data.pop("password")
+        user = User.objects.create_user(**validated_data)
+        user.set_password(password)
+        user.save()
+        return user
+
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):

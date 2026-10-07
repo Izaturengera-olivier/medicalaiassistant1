@@ -129,6 +129,21 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+APP_NAME = os.environ.get("APP_NAME", "Clinical CDS")
+
+# Email: console backend unless SMTP is configured via EMAIL_HOST.
+EMAIL_BACKEND = (
+    "django.core.mail.backends.smtp.EmailBackend"
+    if os.environ.get("EMAIL_HOST")
+    else "django.core.mail.backends.console.EmailBackend"
+)
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "true").lower() == "true"
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "no-reply@clinical-cds.local")
+
 # Custom User Model
 AUTH_USER_MODEL = "accounts.User"
 
@@ -136,6 +151,11 @@ CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173").split(",")
     if origin.strip()
+]
+
+# Vite picks the next free port when 5173 is taken, which is safe to allow locally.
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
 ]
 
 REST_FRAMEWORK = {
@@ -168,6 +188,23 @@ SPECTACULAR_SETTINGS = {
 AI_PROVIDER = os.environ.get("AI_PROVIDER", "mock")
 AI_API_KEY = os.environ.get("AI_API_KEY", "")
 AI_MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
+# Any OpenAI-compatible endpoint works (OpenAI, Groq, vLLM, Ollama at /v1).
+AI_BASE_URL = os.environ.get("AI_BASE_URL", "https://api.openai.com/v1")
+AI_REQUEST_TIMEOUT = int(os.environ.get("AI_REQUEST_TIMEOUT", "60"))
+WEB_SEARCH_PROVIDER = os.environ.get("WEB_SEARCH_PROVIDER", "")
+WEB_SEARCH_API_KEY = os.environ.get("WEB_SEARCH_API_KEY", "")
+WEB_SEARCH_URL = os.environ.get(
+    "WEB_SEARCH_URL", "https://api.tavily.com/search"
+)
+WEB_SEARCH_TIMEOUT = int(os.environ.get("WEB_SEARCH_TIMEOUT", "10"))
+WEB_SEARCH_ALLOWED_DOMAINS = [
+    domain.strip()
+    for domain in os.environ.get(
+        "WEB_SEARCH_ALLOWED_DOMAINS",
+        "who.int,moh.gov.rw,rfd.gov.rw,cdc.gov,nih.gov,nhs.uk,mayoclinic.org,medlineplus.gov,ncbi.nlm.nih.gov",
+    ).split(",")
+    if domain.strip()
+]
 EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "mock")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
 VECTOR_BACKEND = os.environ.get("VECTOR_BACKEND", "pgvector")

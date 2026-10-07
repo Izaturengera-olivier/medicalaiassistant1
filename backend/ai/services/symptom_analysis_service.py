@@ -6,51 +6,106 @@ from django.utils.translation import gettext_lazy as _
 
 
 class SymptomAnalysisService:
-    """Service for analyzing patient symptoms from natural language input."""
+    """Service for analyzing patient symptoms from natural language input in English and Kinyarwanda."""
 
-    # Common symptom patterns and keywords
+    # Common symptom patterns and keywords (English and Kinyarwanda)
     SYMPTOM_PATTERNS = {
-        "headache": ["headache", "head pain", "migraine", "cephalgia"],
-        "fever": ["fever", "high temperature", "pyrexia", "hot", "temperature"],
-        "cough": ["cough", "coughing", "chesty cough", "dry cough"],
-        "body pain": ["body pain", "body ache", "muscle pain", "myalgia", "soreness"],
-        "stomach pain": ["stomach pain", "abdominal pain", "belly pain", "gastralgia"],
-        "nausea": ["nausea", "feeling sick", "queasy", "upset stomach"],
-        "vomiting": ["vomiting", "throwing up", "emesis", "throw up"],
-        "diarrhea": ["diarrhea", "loose stools", "frequent bowel movements"],
-        "fatigue": ["fatigue", "tiredness", "exhaustion", "weakness", "lethargy"],
-        "dizziness": ["dizziness", "lightheaded", "vertigo", "spinning"],
-        "chest pain": ["chest pain", "chest discomfort", "chest pressure", "angina"],
-        "shortness of breath": ["shortness of breath", "breathlessness", "dyspnea", "difficulty breathing"],
-        "sore throat": ["sore throat", "throat pain", "pharyngitis", "scratchy throat"],
-        "runny nose": ["runny nose", "rhinorrhea", "stuffy nose", "nasal congestion"],
-        "sneezing": ["sneezing", "sneeze"],
-        "rash": ["rash", "skin rash", "hives", "itchy skin"],
-        "swelling": ["swelling", "edema", "inflammation", "puffiness"],
+        "headache": [
+            "headache", "head pain", "migraine", "cephalgia",
+            "umutwe", "umutwe urampandura", "umutwe urandya", "kuribwa mu mutwe"
+        ],
+        "fever": [
+            "fever", "high temperature", "pyrexia", "hot", "temperature",
+            "umuriro", "ubushyuhe", "gushyuha", "furere", "gutitira"
+        ],
+        "cough": [
+            "cough", "coughing", "chesty cough", "dry cough",
+            "inkorora", "gukosora", "kosora"
+        ],
+        "body pain": [
+            "body pain", "body ache", "muscle pain", "myalgia", "soreness",
+            "ububabare mu mubiri", "umubiri urambabaza", "kuribwa mu mubiri", "ngingo"
+        ],
+        "stomach pain": [
+            "stomach pain", "abdominal pain", "belly pain", "gastralgia",
+            "nda", "mu nda", "ububabare mu nda", "ndababara mu nda", "mbabara mu nda",
+            "igifu", "igifu kirandya", "ububabare bwo mu igifu"
+        ],
+        "nausea": [
+            "nausea", "feeling sick", "queasy", "upset stomach",
+            "gusesema", "isesemi", "isazi", "igifu kigurumana"
+        ],
+        "vomiting": [
+            "vomiting", "throwing up", "emesis", "throw up",
+            "kuruka", "kuhira", "vomissman"
+        ],
+        "diarrhea": [
+            "diarrhea", "diarrhoea", "loose stools", "frequent bowel movements",
+            "impiswi", "gucibwamo", "gutuza"
+        ],
+        "fatigue": [
+            "fatigue", "tiredness", "exhaustion", "weakness", "lethargy",
+            "umunaniro", "naniwe", "kuruha", "gucika intege"
+        ],
+        "dizziness": [
+            "dizziness", "lightheaded", "vertigo", "spinning",
+            "kuzungerwa", "ikizunguzungu", "ibingibingi"
+        ],
+        "chest pain": [
+            "chest pain", "chest discomfort", "chest pressure", "angina",
+            "mu gituza", "mu gatuza", "ububabare mu gituza", "igituza kirambabaza", "gituza", "gatuza"
+        ],
+        "shortness of breath": [
+            "shortness of breath", "breathlessness", "dyspnea", "difficulty breathing",
+            "guhumeka bigoranye", "kubura umwuka", "umwuka wanjye", "uhumeka nabi"
+        ],
+        "sore throat": [
+            "sore throat", "throat pain", "pharyngitis", "scratchy throat",
+            "muhogo", "ububabare mu muhogo", "umuhogo urambabaza"
+        ],
+        "runny nose": [
+            "runny nose", "rhinorrhea", "stuffy nose", "nasal congestion",
+            "ibicurane", "amazuru itemba", "gutana mu mazuru"
+        ],
+        "sneezing": [
+            "sneezing", "sneeze", "kwasamura"
+        ],
+        "rash": [
+            "rash", "skin rash", "hives", "itchy skin",
+            "ibiheri", "uburuka", "uruhu rurandya", "ku ryaryata"
+        ],
+        "swelling": [
+            "swelling", "edema", "inflammation", "puffiness",
+            "kubyimba", "kubyimbya"
+        ],
+        "back pain": [
+            "back pain", "lower back pain", "lumbar pain",
+            "umugongo", "ububabare mu mugongo", "mbabara umugongo", "umugongo urambabaza"
+        ]
     }
 
-    # Duration patterns
+    # Duration patterns (English and Kinyarwanda)
     DURATION_PATTERNS = [
-        r"(\d+)\s*(day|days|d)",
-        r"(\d+)\s*(week|weeks|w)",
-        r"(\d+)\s*(month|months|m)",
-        r"(\d+)\s*(hour|hours|h)",
-        r"(\d+)\s*(minute|minutes|min)",
-        r"(today|yesterday)",
-        r"(a few days|several days|couple of days)",
+        r"(\d+)\s*(day|days|d|iminsi|umunsi)",
+        r"(\d+)\s*(week|weeks|w|ibyumweru|icyumweru)",
+        r"(\d+)\s*(month|months|m|amezi|ukwezi)",
+        r"(\d+)\s*(hour|hours|h|amasaha|isaha)",
+        r"(\d+)\s*(minute|minutes|min|iminota)",
+        r"(today|yesterday|ejo|ejo hashize|uyu munsi)",
+        r"(a few days|several days|couple of days|iminsi mike|iminsi 2|iminsi 3)",
     ]
 
-    # Severity indicators
+    # Severity indicators (English and Kinyarwanda)
     SEVERITY_INDICATORS = {
-        "mild": ["mild", "slight", "minor", "low", "light"],
-        "moderate": ["moderate", "medium", "some", "fair"],
-        "severe": ["severe", "bad", "terrible", "awful", "extreme", "intense", "strong"],
+        "mild": ["mild", "slight", "minor", "low", "light", "byoroheje", "gake", "bikerense"],
+        "moderate": ["moderate", "medium", "some", "fair", "biringaniye", "biragabanyutse"],
+        "severe": ["severe", "bad", "terrible", "awful", "extreme", "intense", "strong", "cyane", "gikabije", "bikarishye"],
     }
 
     @classmethod
     def extract_symptoms(cls, text: str) -> List[str]:
         """
-        Extract symptoms from natural language text.
+        Extract symptoms from natural language text in English or Kinyarwanda.
         
         Args:
             text: Patient's description of symptoms
@@ -130,11 +185,13 @@ class SymptomAnalysisService:
 
     @classmethod
     def _check_emergency_keywords(cls, text: str) -> bool:
-        """Check for emergency warning signs."""
+        """Check for emergency warning signs in English and Kinyarwanda."""
         emergency_keywords = [
             "chest pain", "difficulty breathing", "shortness of breath",
             "severe bleeding", "loss of consciousness", "confusion",
-            "slurred speech", "sudden weakness", "stroke", "heart attack"
+            "slurred speech", "sudden weakness", "stroke", "heart attack",
+            "ububabare mu gituza", "ububabare mu gatuza", "ndababara mu gatuza", "kubura umwuka", "kuva amaraso cyane",
+            "guta ubwenge", "gucika intege ku ruhande", "kuruka amaraso"
         ]
         
         text_lower = text.lower()

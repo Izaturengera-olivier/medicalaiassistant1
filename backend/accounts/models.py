@@ -94,6 +94,31 @@ class User(AbstractUser):
         return self.role == UserRole.ADMIN
 
 
+class PasswordResetCode(models.Model):
+    """One-time email verification code used for password resets."""
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="password_reset_codes",
+        verbose_name=_("user")
+    )
+    code = models.CharField(_("code"), max_length=10)
+    expires_at = models.DateTimeField(_("expires at"))
+    attempts = models.PositiveIntegerField(_("attempts"), default=0)
+    used = models.BooleanField(_("used"), default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "password_reset_codes"
+        verbose_name = _("password reset code")
+        verbose_name_plural = _("password reset codes")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Reset code for {self.user.email}"
+
+
 class PatientProfile(models.Model):
     """Extended profile for patient users."""
 

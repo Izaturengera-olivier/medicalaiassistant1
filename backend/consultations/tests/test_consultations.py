@@ -39,7 +39,10 @@ class TestConsultationAPI:
         
         assert response.status_code == status.HTTP_201_CREATED
         assert Consultation.objects.filter(patient=user).exists()
-        assert Consultation.objects.get(patient=user).chief_complaint == "I have a headache and fever"
+        consultation = Consultation.objects.get(patient=user)
+        assert consultation.chief_complaint == "I have a headache and fever"
+        # Clients need the new id to keep talking to the same consultation.
+        assert response.data["id"] == consultation.id
 
     def test_list_consultations_as_patient(self):
         """Test that patients can only see their own consultations."""

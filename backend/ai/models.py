@@ -3,11 +3,70 @@
 LLM interfaces, structured assessment, triage.
 """
 
+from django.conf import settings
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from consultations.models import Consultation
 from core.constants import UrgencyLevel
+
+
+class ChatConversation(models.Model):
+    """A saved chat thread so users can reopen previous conversations."""
+
+    KIND_CHOICES = [
+        ("patient", _("Patient symptom chat")),
+        ("professional", _("Professional assistant chat")),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="chat_conversations",
+        verbose_name=_("user")
+    )
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, default="patient")
+    title = models.CharField(_("title"), max_length=120, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "chat_conversations"
+        verbose_name = _("chat conversation")
+        verbose_name_plural = _("chat conversations")
+        ordering = ["-updated_at"]
+
+    def __str__(self):
+        return self.title or f"Conversation #{self.id}"
+
+
+class ChatMessage(models.Model):
+    """A single message in a saved chat conversation."""
+
+    ROLE_CHOICES = [
+        ("user", _("User")),
+        ("assistant", _("Assistant")),
+    ]
+
+    conversation = models.ForeignKey(
+        ChatConversation,
+        on_delete=models.CASCADE,
+        related_name="messages",
+        verbose_name=_("conversation")
+    )
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES)
+    content = models.TextField(_("content"))
+    details = models.JSONField(_("details"), null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "chat_messages"
+        verbose_name = _("chat message")
+        verbose_name_plural = _("chat messages")
+        ordering = ["created_at", "id"]
+
+    def __str__(self):
+        return f"{self.role}: {self.content[:40]}"
 
 
 class AIAssessment(models.Model):

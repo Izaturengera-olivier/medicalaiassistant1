@@ -86,6 +86,16 @@ App: [http://localhost:5173](http://localhost:5173)
 
 Leave `AI_PROVIDER=mock` and `EMBEDDING_PROVIDER=mock` until Phases 6–7. Real keys belong in `.env` only.
 
+To enable live retrieval for patient messages, configure a server-side Tavily key:
+
+```bash
+WEB_SEARCH_PROVIDER=tavily
+WEB_SEARCH_API_KEY=replace-with-your-key
+WEB_SEARCH_ALLOWED_DOMAINS=who.int,moh.gov.rw,rfd.gov.rw,cdc.gov,nih.gov,nhs.uk,mayoclinic.org
+```
+
+The service searches the local approved corpus first, then the configured medical domains. It does not search arbitrary websites or allow the model to invent citations. The configured LLM privately reviews the conversation and retrieved evidence before returning its structured answer; private chain-of-thought is never returned to the patient.
+
 ## Testing
 
 ```bash

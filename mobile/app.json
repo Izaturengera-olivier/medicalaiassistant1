@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Clinical CDS",
+    "slug": "clinical-cds-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#f8fafc",
+    "platforms": ["ios", "android"],
+    "assetBundlePatterns": ["**/*"],
+    "splash": {
+      "backgroundColor": "#0d9488",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.clinicalcds.mobile"
+    },
+    "android": {
+      "package": "com.clinicalcds.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#0d9488"
+      }
+    }
+  }
+}

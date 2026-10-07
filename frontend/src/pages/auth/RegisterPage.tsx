@@ -1,8 +1,13 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "../../context/AuthContext";
+import { errorMessage } from "../../hooks/useAsync";
+import { Field } from "../../components/ui";
+import { MobileDownloadButton } from "../../components/common/MobileAppDownloadModal";
 
 export function RegisterPage() {
+  const { t } = useTranslation();
   const [formData, setFormData] = useState({
     email: "",
     first_name: "",
@@ -13,15 +18,12 @@ export function RegisterPage() {
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  
+
   const { register } = useAuth();
   const navigate = useNavigate();
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
+    setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -31,150 +33,72 @@ export function RegisterPage() {
 
     try {
       await register(formData);
-      navigate("/dashboard");
-    } catch (err: any) {
-      setError(err.response?.data?.detail || "Registration failed. Please try again.");
+      navigate("/app");
+    } catch (err) {
+      setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-lg shadow-md">
-        <div>
-          <h2 className="text-3xl font-bold text-center text-gray-900">
-            Create Account
-          </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            Join the Clinical Decision Support System
-          </p>
-        </div>
-        
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-              {error}
-            </div>
-          )}
-          
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label htmlFor="first_name" className="block text-sm font-medium text-gray-700">
-                  First Name
-                </label>
-                <input
-                  id="first_name"
-                  name="first_name"
-                  type="text"
-                  required
-                  value={formData.first_name}
-                  onChange={handleChange}
-                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-              
-              <div>
-                <label htmlFor="last_name" className="block text-sm font-medium text-gray-700">
-                  Last Name
-                </label>
-                <input
-                  id="last_name"
-                  name="last_name"
-                  type="text"
-                  required
-                  value={formData.last_name}
-                  onChange={handleChange}
-                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-            </div>
-            
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                Email address
-              </label>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                required
-                value={formData.email}
-                onChange={handleChange}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                placeholder="you@example.com"
-              />
-            </div>
-            
-            <div>
-              <label htmlFor="role" className="block text-sm font-medium text-gray-700">
-                Role
-              </label>
-              <select
-                id="role"
-                name="role"
-                required
-                value={formData.role}
-                onChange={handleChange}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="PATIENT">Patient</option>
-                <option value="DOCTOR">Doctor</option>
-                <option value="PHARMACIST">Pharmacist</option>
-              </select>
-            </div>
-            
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                Password
-              </label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                required
-                value={formData.password}
-                onChange={handleChange}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                placeholder="••••••••"
-              />
-            </div>
-            
-            <div>
-              <label htmlFor="password_confirm" className="block text-sm font-medium text-gray-700">
-                Confirm Password
-              </label>
-              <input
-                id="password_confirm"
-                name="password_confirm"
-                type="password"
-                required
-                value={formData.password_confirm}
-                onChange={handleChange}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                placeholder="••••••••"
-              />
-            </div>
-          </div>
+    <div className="auth-page">
+      <div className="auth-card panel">
+        <Link to="/" className="brand" style={{ justifyContent: "center", marginBottom: 8 }}>
+          <span className="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 21s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 5.65-7 10-7 10z" />
+              <path d="M3 12h4l2-3 3 6 2-3h7" />
+            </svg>
+          </span>
+          <span className="brand-name">{t("appName")}</span>
+        </Link>
+        <h1 className="auth-title">{t("auth.registerTitle")}</h1>
+        <p className="auth-sub">{t("auth.registerSub")}</p>
 
-          <div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? "Creating account..." : "Create account"}
+        {error && <div className="error-box">{error}</div>}
+
+        <form onSubmit={handleSubmit}>
+          <div className="form-grid">
+            <Field label={t("auth.firstName")} htmlFor="first_name">
+              <input id="first_name" name="first_name" type="text" required className="input" value={formData.first_name} onChange={handleChange} />
+            </Field>
+            <Field label={t("auth.lastName")} htmlFor="last_name">
+              <input id="last_name" name="last_name" type="text" required className="input" value={formData.last_name} onChange={handleChange} />
+            </Field>
+            <Field label={t("auth.email")} htmlFor="email" span2>
+              <input id="email" name="email" type="email" required className="input" placeholder={t("auth.emailPlaceholder")} value={formData.email} onChange={handleChange} />
+            </Field>
+            <Field label={t("auth.role")} htmlFor="role" span2>
+              <select id="role" name="role" required className="select" value={formData.role} onChange={handleChange}>
+                <option value="PATIENT">{t("status.role.PATIENT")}</option>
+                <option value="DOCTOR">{t("status.role.DOCTOR")}</option>
+                <option value="PHARMACIST">{t("status.role.PHARMACIST")}</option>
+              </select>
+            </Field>
+            <Field label={t("auth.password")} htmlFor="password">
+              <input id="password" name="password" type="password" required className="input" placeholder={t("auth.passwordPlaceholder")} value={formData.password} onChange={handleChange} />
+            </Field>
+            <Field label={t("auth.confirmPassword")} htmlFor="password_confirm">
+              <input id="password_confirm" name="password_confirm" type="password" required className="input" placeholder={t("auth.passwordPlaceholder")} value={formData.password_confirm} onChange={handleChange} />
+            </Field>
+          </div>
+          <div className="form-actions" style={{ marginTop: 16 }}>
+            <button type="submit" className="btn btn-primary" style={{ width: "100%" }} disabled={loading}>
+              {loading ? t("auth.creatingAccount") : t("auth.createAccount")}
             </button>
           </div>
-
-          <div className="text-center">
-            <Link to="/login" className="text-sm text-blue-600 hover:text-blue-500">
-              Already have an account? Sign in
-            </Link>
-          </div>
         </form>
+
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "center" }}>
+          <MobileDownloadButton />
+        </div>
+
+        <p className="auth-foot">
+          {t("auth.haveAccount")} <Link to="/login">{t("auth.signIn")}</Link>
+        </p>
       </div>
     </div>
   );
 }
+

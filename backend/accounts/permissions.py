@@ -74,3 +74,15 @@ class IsVerifiedHealthcareProfessional(permissions.BasePermission):
             return hasattr(request.user, 'pharmacist_profile') and request.user.pharmacist_profile.verified
         
         return False
+
+
+class IsAdminUserOrReadOnly(permissions.BasePermission):
+    """Permission to allow safe methods to authenticated users, and write methods only to admin users."""
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return request.user.role == UserRole.ADMIN
+

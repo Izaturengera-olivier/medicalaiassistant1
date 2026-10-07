@@ -1,14 +1,25 @@
 """Service for medical knowledge retrieval and evidence gathering."""
 
+import logging
 from typing import List, Dict, Any, Optional
+
+import requests
+from django.conf import settings
 from django.utils.translation import gettext_lazy as _
 
 from ..retrievers import MockMedicalRetriever, VectorSearchRetriever, ApprovedSourceFilter
+from core.glossary import expand_query
 from .knowledge_service import KnowledgeService
+
+logger = logging.getLogger(__name__)
 
 
 class RetrievalService:
     """Service for retrieving medical evidence from approved sources."""
+
+    # Long enough for the model to ground an answer, short enough to keep the
+    # prompt within budget when several sources are retrieved.
+    EVIDENCE_CONTENT_CHARS = 1200
 
     def __init__(self):
         self.knowledge_service = KnowledgeService()
@@ -38,15 +49,20 @@ class RetrievalService:
         Returns:
             List of retrieved evidence with metadata
         """
-        # Search for relevant documents
-        documents = self.knowledge_service.search_knowledge(query, limit=max_results)
-        
+        # Search the local approved corpus first, then optionally search approved
+        # medical domains through the configured web-search provider.
+        # Kinyarwanda questions are expanded with their English terms first: every
+        # approved source publishes in English, so the raw question would match nothing.
+        search_query = expand_query(query)
+        documents = self.knowledge_service.search_knowledge(search_query, limit=max_results)
+        documents.extend(self._search_web(search_query, max_results=max_results))
+
         # Apply approved source filter if requested
         if apply_filter:
             documents = self.approved_source_filter.filter(documents)
-        
+
         # Rank results by relevance
-        ranked_documents = self.knowledge_service.retriever.rank(query, documents)
+        ranked_documents = self.knowledge_service.retriever.rank(search_query, documents)
         
         # Format as evidence
         evidence = []
@@ -57,6 +73,7 @@ class RetrievalService:
                 "content": doc.get("content"),
                 "source_id": doc.get("source_id"),
                 "source_name": self._get_source_name(doc.get("source_id")),
+                "source_type": self._get_source_type(doc.get("source_id")),
                 "url": doc.get("url"),
                 "relevance_score": doc.get("relevance_score", 0),
                 "metadata": doc.get("metadata", {})
@@ -64,10 +81,74 @@ class RetrievalService:
         
         return evidence
 
+    def _search_web(self, query: str, max_results: int) -> List[Dict[str, Any]]:
+        """Retrieve live results without making network calls in offline mode."""
+        provider = getattr(settings, "WEB_SEARCH_PROVIDER", "")
+        api_key = getattr(settings, "WEB_SEARCH_API_KEY", "")
+        allowed_domains = getattr(settings, "WEB_SEARCH_ALLOWED_DOMAINS", [])
+        if not provider:
+            return []
+        if provider != "tavily":
+            logger.warning(
+                "WEB_SEARCH_PROVIDER=%r is not supported; live trusted search is disabled.",
+                provider,
+            )
+            return []
+        if not api_key or not allowed_domains:
+            logger.warning(
+                "Tavily web search needs WEB_SEARCH_API_KEY and "
+                "WEB_SEARCH_ALLOWED_DOMAINS; live trusted search is disabled."
+            )
+            return []
+
+        payload = {
+            "api_key": api_key,
+            "query": query[:2000],
+            "search_depth": "advanced",
+            "max_results": max_results,
+            "include_answer": False,
+            "include_raw_content": False,
+            "include_domains": allowed_domains,
+        }
+        try:
+            response = requests.post(
+                getattr(settings, "WEB_SEARCH_URL", "https://api.tavily.com/search"),
+                json=payload,
+                timeout=getattr(settings, "WEB_SEARCH_TIMEOUT", 10),
+            )
+            response.raise_for_status()
+            results = response.json().get("results", [])
+        except (requests.RequestException, ValueError, TypeError) as exc:
+            logger.warning("Live medical web search failed: %s", exc)
+            return []
+
+        documents = []
+        for result in results:
+            url = str(result.get("url") or "").strip()
+            title = str(result.get("title") or "").strip()
+            content = str(result.get("content") or "").strip()
+            if not url or not title or not content:
+                continue
+            documents.append({
+                "id": f"web:{url}",
+                "title": title,
+                "content": content[:4000],
+                "source_id": "web_search",
+                "url": url,
+                "relevance_score": float(result.get("score") or 0),
+                "metadata": {"retrieval_method": "live_web_search"},
+            })
+        return documents
+
     def _get_source_name(self, source_id: str) -> str:
         """Get source name by ID."""
         source = self.knowledge_service.get_source_details(source_id)
         return source.get("name", "Unknown") if source else "Unknown"
+
+    def _get_source_type(self, source_id: str) -> str:
+        """Get source type (WHO/MOH/FDA/...) by ID."""
+        source = self.knowledge_service.get_source_details(source_id)
+        return source.get("source_type", "") if source else ""
 
     def extract_key_points(self, evidence: Dict[str, Any]) -> List[str]:
         """
@@ -107,16 +188,18 @@ class RetrievalService:
         """
         if not evidence_list:
             return "No relevant evidence found from approved sources."
-        
-        formatted = "Retrieved evidence from approved medical sources:\n\n"
-        
+
+        formatted = (
+            "Retrieved evidence from approved medical sources. "
+            "Cite each one by its number below, e.g. [1].\n\n"
+        )
+
         for i, evidence in enumerate(evidence_list, 1):
-            formatted += f"Source {i}: {evidence['source_name']}\n"
-            formatted += f"Title: {evidence['title']}\n"
-            formatted += f"Relevance: {evidence['relevance_score']}\n"
-            formatted += f"Content: {evidence['content'][:200]}...\n"
-            formatted += f"URL: {evidence['url']}\n\n"
-        
+            content = (evidence.get("content") or "").strip()
+            formatted += f"[{i}] {evidence.get('source_name') or 'Unknown'} — {evidence.get('title') or ''}\n"
+            formatted += f"URL: {evidence.get('url') or ''}\n"
+            formatted += f"Content: {content[:self.EVIDENCE_CONTENT_CHARS]}\n\n"
+
         return formatted
 
     def check_source_reliability(self, source_id: str) -> Dict[str, Any]:

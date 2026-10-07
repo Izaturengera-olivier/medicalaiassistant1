@@ -187,20 +187,30 @@ def check_interactions(request, medication_id: int):
     try:
         from medications.models import Medication
         medication = Medication.objects.get(id=medication_id)
-        
-        interactions = MedicationInteraction.objects.filter(medication=medication)
-        
-        interaction_data = [
-            {
-                "id": interaction.id,
-                "interacting_medication": interaction.interacting_medication.name,
-                "severity": interaction.severity,
-                "description": interaction.description,
-                "recommendation": interaction.recommendation
-            }
-            for interaction in interactions
-        ]
-        
+
+        interactions = MedicationInteraction.objects.filter(
+            Q(medication_1=medication) | Q(medication_2=medication)
+        ).distinct()
+
+        interaction_data = []
+        for interaction in interactions:
+            other = (
+                interaction.medication_2
+                if interaction.medication_1_id == medication.id
+                else interaction.medication_1
+            )
+            interaction_data.append(
+                {
+                    "id": interaction.id,
+                    "interacting_medication": other.name,
+                    "interaction_type": interaction.interaction_type,
+                    "severity": interaction.severity,
+                    "description": interaction.description,
+                    "evidence_source": interaction.evidence_source,
+                    "recommendation": interaction.recommendation,
+                }
+            )
+
         return Response({
             "medication": medication.name,
             "interactions": interaction_data,

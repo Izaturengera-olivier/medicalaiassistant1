@@ -50,9 +50,21 @@ class ConsultationViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(patient=self.request.user)
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsDoctor])
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(
+            ConsultationSerializer(serializer.instance).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def assign_doctor(self, request, pk=None):
-        """Assign a doctor to a consultation."""
+        """Assign a doctor to a consultation (Doctor or Admin)."""
+        if request.user.role not in ["DOCTOR", "ADMIN"]:
+            return Response({"error": _("Permission denied")}, status=status.HTTP_403_FORBIDDEN)
+
         consultation = self.get_object()
         from accounts.models import User
         
@@ -66,6 +78,8 @@ class ConsultationViewSet(viewsets.ModelViewSet):
         try:
             doctor = User.objects.get(id=doctor_id, role="DOCTOR")
             consultation.assigned_doctor = doctor
+            if consultation.status == "PENDING":
+                consultation.status = "IN_PROGRESS"
             consultation.save()
             return Response(
                 ConsultationSerializer(consultation).data,
@@ -77,9 +91,12 @@ class ConsultationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated, IsDoctor])
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def complete(self, request, pk=None):
         """Mark consultation as completed."""
+        if request.user.role not in ["DOCTOR", "ADMIN"]:
+            return Response({"error": _("Permission denied")}, status=status.HTTP_403_FORBIDDEN)
+            
         consultation = self.get_object()
         consultation.status = "COMPLETED"
         consultation.completed_at = timezone.now()
@@ -88,6 +105,24 @@ class ConsultationViewSet(viewsets.ModelViewSet):
             ConsultationSerializer(consultation).data,
             status=status.HTTP_200_OK
         )
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def override_status(self, request, pk=None):
+        """Admin/Doctor status override."""
+        if request.user.role not in ["DOCTOR", "ADMIN"]:
+            return Response({"error": _("Permission denied")}, status=status.HTTP_403_FORBIDDEN)
+
+        new_status = request.data.get("status")
+        if new_status not in ["PENDING", "IN_PROGRESS", "COMPLETED", "CANCELLED"]:
+            return Response({"error": _("Invalid status")}, status=status.HTTP_400_BAD_REQUEST)
+
+        consultation = self.get_object()
+        consultation.status = new_status
+        if new_status == "COMPLETED":
+            consultation.completed_at = timezone.now()
+        consultation.save()
+        return Response(ConsultationSerializer(consultation).data, status=status.HTTP_200_OK)
+
 
 
 class SymptomViewSet(viewsets.ModelViewSet):

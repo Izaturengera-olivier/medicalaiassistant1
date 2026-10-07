@@ -1,8 +1,32 @@
 """Pluggable medical retrieval interface. Implementations land in Phase 7."""
 
+import re
 from abc import ABC, abstractmethod
 from typing import Any, Sequence, List, Dict
 from datetime import datetime
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+_STOPWORDS = frozenset({
+    "the", "and", "for", "with", "have", "has", "had", "was", "were", "are", "been",
+    "this", "that", "these", "those", "there", "from", "since", "about", "into",
+    "when", "what", "where", "which", "whether", "would", "could", "should", "does",
+    "did", "your", "her", "him", "his", "she", "they", "them", "their", "our", "you",
+    "its", "not", "but", "also", "too", "very", "much", "many", "more", "most",
+    "some", "any", "all", "each", "other", "than", "then", "just", "only", "like",
+    "get", "got", "day", "days", "week", "weeks", "month", "months", "year", "years",
+    "hour", "hours", "today", "yesterday", "feel", "feels", "feeling", "felt",
+    "pain",
+})
+
+
+def _tokenize(text: str) -> List[str]:
+    """Split text into meaningful lowercase tokens for keyword scoring."""
+    return [
+        token
+        for token in _TOKEN_RE.findall((text or "").lower())
+        if len(token) > 2 and token not in _STOPWORDS
+    ]
 
 
 class MedicalRetriever(ABC):
@@ -129,24 +153,15 @@ class MockMedicalRetriever(MedicalRetriever):
         self.sources = []
 
     def search(self, query: str, *, limit: int = 8) -> Sequence[dict[str, Any]]:
-        """Mock search - returns documents based on keyword matching."""
-        query_lower = query.lower()
-        
-        # Simple keyword matching
+        """Mock search - returns documents ranked by token overlap with the query."""
+        tokens = _tokenize(query)
+
         scored_docs = []
         for doc in self.documents:
-            content_lower = doc.get("content", "").lower()
-            title_lower = doc.get("title", "").lower()
-            
-            score = 0
-            if query_lower in content_lower:
-                score += 1
-            if query_lower in title_lower:
-                score += 2
-            
+            score = self._score_document(tokens, doc)
             if score > 0:
                 scored_docs.append({**doc, "relevance_score": score})
-        
+
         # Sort by score and return top results
         scored_docs.sort(key=lambda x: x["relevance_score"], reverse=True)
         return scored_docs[:limit]
@@ -156,22 +171,27 @@ class MockMedicalRetriever(MedicalRetriever):
         return [doc for doc in self.documents if doc.get("id") in source_ids]
 
     def rank(self, query: str, documents: Sequence[dict[str, Any]]) -> Sequence[dict[str, Any]]:
-        """Mock rank - simple scoring based on keyword presence."""
-        query_lower = query.lower()
-        
+        """Mock rank - re-scores documents by token overlap with the query."""
+        tokens = _tokenize(query)
+
         for doc in documents:
-            content_lower = doc.get("content", "").lower()
-            title_lower = doc.get("title", "").lower()
-            
-            score = 0
-            if query_lower in content_lower:
-                score += 1
-            if query_lower in title_lower:
-                score += 2
-            
-            doc["relevance_score"] = score
-        
+            doc["relevance_score"] = self._score_document(tokens, doc)
+
         return sorted(documents, key=lambda x: x["relevance_score"], reverse=True)
+
+    @staticmethod
+    def _score_document(tokens: Sequence[str], document: Dict[str, Any]) -> int:
+        """Score a document by token overlap, weighting title matches higher."""
+        title_tokens = set(_tokenize(document.get("title") or ""))
+        content_tokens = set(_tokenize(document.get("content") or ""))
+
+        score = 0
+        for token in tokens:
+            if token in title_tokens:
+                score += 2
+            elif token in content_tokens:
+                score += 1
+        return score
 
     def get_sources(self) -> Sequence[dict[str, Any]]:
         """Mock get sources - returns predefined sources."""
