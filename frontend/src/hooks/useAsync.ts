@@ -41,11 +41,23 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []) {
 }
 
 export function errorMessage(err: unknown): string {
-  const e = err as { response?: { data?: { detail?: string; error?: string } }; message?: string };
-  return (
-    e?.response?.data?.detail ||
-    e?.response?.data?.error ||
-    e?.message ||
-    "Request failed"
-  );
+  const e = err as { response?: { data?: unknown }; message?: string };
+  const data = e?.response?.data;
+
+  if (data && typeof data === "object") {
+    const fields = data as Record<string, unknown>;
+    // The backend is inconsistent about the envelope key: DRF auth failures use
+    // "detail", the AI views use "error", and accounts uses "message".
+    for (const key of ["detail", "error", "message"]) {
+      const value = fields[key];
+      if (typeof value === "string" && value) return value;
+    }
+    // Serializer errors map each field to a list of messages.
+    for (const value of Object.values(fields)) {
+      const first = Array.isArray(value) ? value[0] : value;
+      if (typeof first === "string" && first) return first;
+    }
+  }
+
+  return e?.message || "Request failed";
 }

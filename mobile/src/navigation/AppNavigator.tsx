@@ -7,6 +7,7 @@ import { Text, View, ActivityIndicator } from "react-native";
 import { useAuth } from "../context/AuthContext";
 import { LoginScreen } from "../screens/auth/LoginScreen";
 import { RegisterScreen } from "../screens/auth/RegisterScreen";
+import { ForgotPasswordScreen } from "../screens/auth/ForgotPasswordScreen";
 import { SymptomAssessmentScreen } from "../screens/patient/SymptomAssessmentScreen";
 import { HistoryScreen } from "../screens/patient/HistoryScreen";
 import { ClinicalAssistantScreen } from "../screens/doctor/ClinicalAssistantScreen";
@@ -101,6 +102,7 @@ export const AppNavigator = () => {
           <>
             <Stack.Screen name="Login" component={LoginScreen} />
             <Stack.Screen name="Register" component={RegisterScreen} />
+            <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
           </>
         )}
       </Stack.Navigator>

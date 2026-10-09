@@ -159,6 +159,14 @@ export const authAPI = {
     password_confirm: string;
     role: string;
   }) => mobileAPI.post("/auth/register/", data),
+  forgotPassword: (email: string) =>
+    mobileAPI.post("/auth/forgot-password/", { email }),
+  resetPassword: (data: {
+    email: string;
+    code: string;
+    password: string;
+    password_confirm: string;
+  }) => mobileAPI.post("/auth/reset-password/", data),
   getMe: () => mobileAPI.get("/auth/me/"),
 };
 

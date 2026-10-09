@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import timedelta
 from pathlib import Path
@@ -131,18 +132,39 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 APP_NAME = os.environ.get("APP_NAME", "Clinical CDS")
 
-# Email: console backend unless SMTP is configured via EMAIL_HOST.
-EMAIL_BACKEND = (
-    "django.core.mail.backends.smtp.EmailBackend"
-    if os.environ.get("EMAIL_HOST")
-    else "django.core.mail.backends.console.EmailBackend"
-)
+# Transactional email identity. Filters treat mail as more trustworthy when it
+# is answerable and points at a real site, so both are worth configuring.
+SITE_URL = os.environ.get("SITE_URL", "").rstrip("/")
+SUPPORT_EMAIL = os.environ.get("SUPPORT_EMAIL", "")
+
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
 EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
-EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+# Google displays App Passwords as four space-separated groups; SMTP login wants
+# them as one contiguous string.
+EMAIL_HOST_PASSWORD = "".join(os.environ.get("EMAIL_HOST_PASSWORD", "").split())
 EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "true").lower() == "true"
+EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "false").lower() == "true"
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "no-reply@clinical-cds.local")
+# Email timeout to prevent hanging
+EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT", "30"))
+# Server hostname for SMTP HELO/EHLO - helps with spam filtering
+EMAIL_HOSTNAME = os.environ.get("EMAIL_HOSTNAME", "")
+# Additional deliverability settings
+EMAIL_SUBJECT_PREFIX = ""
+
+# A host without a password can never authenticate, so treat it as unconfigured
+# rather than letting every password reset fail with SMTPAuthenticationError.
+EMAIL_BACKEND = (
+    "django.core.mail.backends.smtp.EmailBackend"
+    if EMAIL_HOST and EMAIL_HOST_PASSWORD
+    else "django.core.mail.backends.console.EmailBackend"
+)
+if EMAIL_HOST and not EMAIL_HOST_PASSWORD:
+    logging.getLogger(__name__).warning(
+        "EMAIL_HOST is set but EMAIL_HOST_PASSWORD is empty; "
+        "verification codes go to the console instead of being emailed."
+    )
 
 # Custom User Model
 AUTH_USER_MODEL = "accounts.User"
@@ -167,6 +189,13 @@ REST_FRAMEWORK = {
     "DEFAULT_FILTER_BACKENDS": ("django_filters.rest_framework.DjangoFilterBackend",),
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
+    # Applied only where a view declares matching throttle classes, so this does
+    # not silently rate-limit the rest of the API.
+    "DEFAULT_THROTTLE_RATES": {
+        "forgot_password_burst": "5/hour",
+        "forgot_password_daily": "20/day",
+        "login": "10/minute",
+    },
 }
 
 SIMPLE_JWT = {

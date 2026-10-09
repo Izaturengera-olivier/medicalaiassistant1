@@ -6,6 +6,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 from core.constants import UserRole
+from accounts.models import DoctorProfile, PatientProfile, PharmacistProfile
 
 User = get_user_model()
 
@@ -52,6 +53,61 @@ class TestUserRegistration:
         assert response.status_code == status.HTTP_201_CREATED
         assert User.objects.filter(email="doctor@example.com").exists()
         assert response.data["user"]["role"] == UserRole.DOCTOR
+
+    @pytest.mark.parametrize(
+        "role,profile_model,prefix",
+        [
+            (UserRole.DOCTOR, DoctorProfile, "LIC-"),
+            (UserRole.PHARMACIST, PharmacistProfile, "PHARM-"),
+        ],
+    )
+    def test_registering_several_professionals_does_not_collide(
+        self, role, profile_model, prefix
+    ):
+        """license_number is unique and non-null, so registering a second
+        professional used to collide on Django's "" default and 500 the request."""
+        client = APIClient()
+        url = reverse("register")
+
+        for i in range(3):
+            response = client.post(
+                url,
+                {
+                    "email": f"{role.lower()}{i}@example.com",
+                    "first_name": "Jane",
+                    "last_name": "Smith",
+                    "role": role,
+                    "password": "SecurePass123!",
+                    "password_confirm": "SecurePass123!",
+                },
+                format="json",
+            )
+            assert response.status_code == status.HTTP_201_CREATED
+
+        licenses = list(profile_model.objects.values_list("license_number", flat=True))
+        assert len(licenses) == 3
+        assert len(set(licenses)) == 3, f"duplicate license numbers: {licenses}"
+        assert "" not in licenses
+        assert all(value.startswith(prefix) for value in licenses)
+
+    def test_register_patient_creates_profile(self):
+        client = APIClient()
+        response = client.post(
+            reverse("register"),
+            {
+                "email": "profiled@example.com",
+                "first_name": "Pat",
+                "last_name": "Ient",
+                "role": UserRole.PATIENT,
+                "password": "SecurePass123!",
+                "password_confirm": "SecurePass123!",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        user = User.objects.get(email="profiled@example.com")
+        assert PatientProfile.objects.filter(user=user).exists()
 
     def test_register_password_mismatch(self):
         """Test registration with password mismatch."""

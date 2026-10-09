@@ -119,6 +119,31 @@ class PasswordResetCode(models.Model):
         return f"Reset code for {self.user.email}"
 
 
+class EmailVerificationCode(models.Model):
+    """One-time email verification code used for user email verification."""
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="verification_codes",
+        verbose_name=_("user")
+    )
+    code = models.CharField(_("code"), max_length=10)
+    expires_at = models.DateTimeField(_("expires at"))
+    attempts = models.PositiveIntegerField(_("attempts"), default=0)
+    used = models.BooleanField(_("used"), default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "email_verification_codes"
+        verbose_name = _("email verification code")
+        verbose_name_plural = _("email verification codes")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Verification code for {self.user.email}"
+
+
 class PatientProfile(models.Model):
     """Extended profile for patient users."""
 

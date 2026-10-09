@@ -93,6 +93,13 @@ export const LoginScreen = ({ navigation }: any) => {
 
           <TouchableOpacity
             style={styles.linkButton}
+            onPress={() => navigation.navigate("ForgotPassword")}
+          >
+            <Text style={styles.linkText}>Forgot Password?</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.linkButton}
             onPress={() => navigation.navigate("Register")}
           >
             <Text style={styles.linkText}>Don't have an account? Register</Text>
