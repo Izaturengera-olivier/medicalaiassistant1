@@ -32,16 +32,10 @@ services:
           name: cds-postgres
           property: connectionString
       - key: CORS_ALLOWED_ORIGINS
-        fromService:
-          type: web
-          name: clinical-cds-frontend
-          property: url
+        value: https://clinical-cds-frontend.onrender.com
       - key: CSRF_TRUSTED_ORIGINS
-        fromService:
-          type: web
-          name: clinical-cds-frontend
-          property: url
-      # AI Provider settings (set AI_API_KEY in Render Dashboard)
+        value: https://clinical-cds-frontend.onrender.com
+      # AI Provider settings (enter AI_API_KEY on the Render Blueprint setup page)
       - key: AI_PROVIDER
         value: deepseek
       - key: AI_MODEL
@@ -76,8 +70,4 @@ services:
         destination: /index.html
     envVars:
       - key: VITE_API_URL
-        fromService:
-          type: web
-          name: clinical-cds-backend
-          property: url
-          append: /api
+        value: https://clinical-cds-backend.onrender.com/api

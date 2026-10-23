@@ -36,6 +36,13 @@ X_FRAME_OPTIONS = "DENY"
 # WhiteNoise compressed static files storage
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
+# Permissive CORS origin regex for Render, Railway, and Fly.io subdomains
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https:\/\/.*\.onrender\.com$",
+    r"^https:\/\/.*\.up\.railway\.app$",
+    r"^https:\/\/.*\.fly\.dev$",
+]
+
 # CSRF Trusted Origins for deployed frontend domain
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
@@ -46,6 +53,10 @@ for origin in CORS_ALLOWED_ORIGINS:
     if origin.startswith("http://") or origin.startswith("https://"):
         if origin not in CSRF_TRUSTED_ORIGINS:
             CSRF_TRUSTED_ORIGINS.append(origin)
+
+for wildcard_domain in ["https://*.onrender.com", "https://*.up.railway.app", "https://*.fly.dev"]:
+    if wildcard_domain not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(wildcard_domain)
 
 # 12-Factor App logging to stdout (compatible with Render, Railway, Fly.io, Docker)
 LOGGING = {
