@@ -526,6 +526,45 @@ nav a { margin-left: 12px; }
   color: var(--accent-strong); vertical-align: super;
   padding: 0 2px; cursor: default;
 }
+/* A marker whose source has a URL is a link: pointer, no underline on the
+   bracket itself, accent on hover — but it stays the same tiny superscript. */
+.reply-citation-link { text-decoration: none; }
+.reply-citation-link .reply-citation { cursor: pointer; }
+.reply-citation-link:hover .reply-citation,
+.reply-citation-link:focus-visible .reply-citation { color: var(--accent); text-decoration: underline; }
+/* ChatGPT-style footnote strip: one light rule, then small source chips.
+   It is part of the reply, not another bubble, so it borrows no card surface. */
+.reply-references {
+  margin-top: 2px; padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.reply-references-title {
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.reply-reference-list {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin: 0; padding: 0; list-style: none;
+}
+.reply-reference-item { min-width: 0; max-width: 100%; }
+.reply-reference-link {
+  display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 100%;
+  padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--border); background: transparent;
+  font-size: 0.75rem; line-height: 1.35; text-decoration: none;
+  color: var(--ink-soft);
+}
+.reply-reference-link:hover, .reply-reference-link:focus-visible {
+  border-color: var(--border-strong); background: #2a2a2a;
+}
+.reply-reference-marker { font-size: 0.68rem; font-weight: 700; color: var(--accent-strong); }
+.reply-reference-domain { color: var(--muted); white-space: nowrap; }
+.reply-reference-name {
+  min-width: 0; max-width: 280px;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.reply-reference-link:hover .reply-reference-name { color: var(--ink); }
 .chatgpt-msg-actions { display: flex; gap: 6px; margin-top: 6px; }
 .speak-btn {
   display: inline-flex; align-items: center; justify-content: center;

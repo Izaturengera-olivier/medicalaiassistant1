@@ -13,12 +13,15 @@ import {
 } from "react-native";
 import { aiAPI } from "../../services/api";
 import { AssistantReply } from "../../components/AssistantReply";
+import type { ReplySource } from "../../utils/replyText";
 
 interface ChatTurn {
   role: "user" | "assistant";
   content: string;
   local?: boolean;
   recommended_next_step?: string;
+  // 1:1 with the reply's `[n]` numbering: the citation links live in here.
+  sources?: ReplySource[];
 }
 
 const GREETING: ChatTurn = {
@@ -68,6 +71,7 @@ export const ClinicalAssistantScreen = () => {
             res.data.general_information ||
             "Clinical decision support response ready.",
           recommended_next_step: res.data.recommended_next_step,
+          sources: res.data.sources,
         },
       ]);
     } catch (err: any) {
@@ -127,7 +131,7 @@ export const ClinicalAssistantScreen = () => {
               ]}
             >
               {m.role === "assistant" ? (
-                <AssistantReply content={m.content} bodyColor="#1e293b" />
+                <AssistantReply content={m.content} sources={m.sources} bodyColor="#1e293b" />
               ) : (
                 <Text style={[styles.bubbleText, styles.userText]}>{m.content}</Text>
               )}

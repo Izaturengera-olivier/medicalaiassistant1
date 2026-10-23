@@ -2,10 +2,10 @@
  * Plain-text AI reply formatting rules.
  *
  * This module is deliberately dependency-free and React-free. It holds the
- * *rules* only (normalization, block parsing, speech text) so the web
- * (`frontend/src/components/common/AssistantReply.tsx`) and the mobile
- * (`mobile/src/components/AssistantReply.tsx`) renderers can each build their
- * own platform nodes from the exact same structure.
+ * *rules* only (normalization, block parsing, speech text, and the `[n]` ->
+ * source lookup) so the web (`frontend/src/components/common/AssistantReply.tsx`)
+ * and the mobile (`mobile/src/components/AssistantReply.tsx`) renderers can each
+ * build their own platform nodes from the exact same structure.
  *
  * KEEP THIS FILE BYTE-IDENTICAL WITH mobile/src/utils/replyText.ts.
  * The two apps are separate packages with no shared workspace, so the rules are
@@ -23,6 +23,33 @@ export type ReplyBlock =
 export type InlineSegment =
   | { kind: "text"; value: string }
   | { kind: "citation"; value: string };
+
+/**
+ * One retrieved evidence item, as sent by the backend alongside a reply.
+ *
+ * The array is 1:1 with the reply's evidence numbering — `[n]` is `sources[n-1]`
+ * — and every entry carries an explicit `index` so a reordered array can still
+ * be resolved. URLs may repeat and may be empty, so nothing here may assume a
+ * marker is linkable.
+ */
+export interface ReplySource {
+  index?: number;
+  name?: string;
+  title?: string;
+  url?: string;
+}
+
+/** One row of the reference strip shown under a reply. */
+export interface ReplySourceLink {
+  /** The href exactly as retrieved, only trimmed — never rewritten. */
+  url: string;
+  /** Scheme-less host shown first, e.g. "who.int". */
+  domain: string;
+  /** The source's own words: title, then name, then the domain again. */
+  label: string;
+  /** The `[n]` of the lowest marker that points at this URL. */
+  marker: number;
+}
 
 /** `[1]`, `[12]` — the inline citation shape the prompt asks for. */
 const CITATION_RE = /\[\d{1,2}\]/g;
@@ -107,6 +134,128 @@ export function splitInlineSegments(text: string): InlineSegment[] {
   const tail = text.slice(cursor);
   if (tail) segments.push({ kind: "text", value: tail });
   return segments;
+}
+
+/** Trimmed string-or-nothing, for fields the backend may send as null/undefined. */
+function trimmed(value: string | null | undefined): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/** `[1]` -> 1; anything that is not a positive integer is not a real marker. */
+function markerNumber(value: string | number | null | undefined): number {
+  const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+/**
+ * The source a `[n]` marker points at: strictly `sources[n-1]`, except when that
+ * entry's own `index` disagrees with `n` (an array that came back reordered), in
+ * which case the entry stamped with that index wins. Returns `null` when nothing
+ * matches — out-of-range markers, `[0]`, an empty array — so the caller falls
+ * back to plain, unlinked text instead of guessing at a source.
+ */
+export function sourceForMarker(
+  sources: readonly ReplySource[] | null | undefined,
+  marker: string | number | null | undefined
+): ReplySource | null {
+  if (!sources || !sources.length) return null;
+  const wanted = markerNumber(marker);
+  if (!wanted) return null;
+
+  const positional = sources[wanted - 1];
+  if (positional && (positional.index === undefined || positional.index === wanted)) {
+    return positional;
+  }
+  return sources.find((source) => source && source.index === wanted) ?? null;
+}
+
+/**
+ * Display host for a source URL ("www.who.int" -> "who.int"). Parsed by hand,
+ * not with `new URL()`: React Native's runtime does not reliably provide it,
+ * and this module is shared with mobile.
+ */
+export function sourceDomain(url: string | null | undefined): string {
+  const href = trimmed(url);
+  if (!href) return "";
+  const host = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/(?:[^/?#@]*@)?([^/?#:]+)/.exec(href)?.[1] ?? href.split(/[/?#]/)[0];
+  return String(host).toLowerCase().replace(/^www\./, "");
+}
+
+/** Two spellings of the same target: ignoring fragment, trailing slash, case. */
+function sourceUrlKey(url: string): string {
+  return url.split("#")[0].replace(/\/+$/, "").toLowerCase();
+}
+
+/** Which markers the reply actually cites: "see [2] then [1]" returns [2, 1]. */
+export function citedMarkers(raw: string | null | undefined): number[] {
+  const text = normalizeReplyText(raw);
+  const found: number[] = [];
+  const pattern = /\[(\d{1,3})\]/g;
+  let match = pattern.exec(text);
+  while (match) {
+    const marker = Number(match[1]);
+    if (marker > 0 && !found.includes(marker)) found.push(marker);
+    match = pattern.exec(text);
+  }
+  return found;
+}
+
+/**
+ * The reference strip: every *distinct usable* URL, in citation order. Retrieval
+ * can return the same page for two markers, and an entry without a URL cannot be
+ * opened, so it appears nowhere — which is why this can be empty even when the
+ * response carries sources.
+ *
+ * Pass the reply's `citedMarkers` and only the pages the answer actually points
+ * at are listed; everything else the search returned stays out of the patient's
+ * view.
+ */
+export function sourceLinksForDisplay(
+  sources: readonly ReplySource[] | null | undefined,
+  cited?: readonly number[] | null
+): ReplySourceLink[] {
+  if (!sources || !sources.length) return [];
+
+  const byUrl = new Map<string, { link: ReplySourceLink; markers: number[] }>();
+  sources.forEach((source, position) => {
+    const url = trimmed(source?.url);
+    if (!url) return;
+
+    const marker = markerNumber(source?.index) || position + 1;
+    const key = sourceUrlKey(url);
+    const group = byUrl.get(key);
+    if (group) {
+      // Several markers can share a page: keep the lowest number for that row.
+      group.markers.push(marker);
+      if (marker < group.link.marker) group.link.marker = marker;
+      return;
+    }
+
+    const domain = sourceDomain(url);
+    byUrl.set(key, {
+      markers: [marker],
+      link: {
+        url,
+        domain,
+        label: trimmed(source?.title) || trimmed(source?.name) || domain,
+        marker,
+      },
+    });
+  });
+
+  const groups = [...byUrl.values()];
+  if (!cited) return groups.map((group) => group.link);
+
+  const wanted = new Set(cited);
+  return groups
+    .filter((group) => group.markers.some((marker) => wanted.has(marker)))
+    .map((group) => {
+      // Show the number the reader actually sees next to the sentence.
+      const shown = group.markers
+        .filter((marker) => wanted.has(marker))
+        .sort((a, b) => a - b)[0];
+      return shown === undefined ? group.link : { ...group.link, marker: shown };
+    });
 }
 
 interface ListLine {

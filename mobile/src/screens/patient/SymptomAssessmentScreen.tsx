@@ -14,6 +14,7 @@ import {
 import * as DocumentPicker from "expo-document-picker";
 import { aiAPI, consultationsAPI } from "../../services/api";
 import { AssistantReply } from "../../components/AssistantReply";
+import type { ReplySource } from "../../utils/replyText";
 
 interface Message {
   role: "user" | "assistant";
@@ -24,6 +25,8 @@ interface Message {
   recommended_next_step?: string;
   warning_signs?: string[];
   follow_up_questions?: string[];
+  // 1:1 with the reply's `[n]` numbering: the citation links live in here.
+  sources?: ReplySource[];
 }
 
 const GREETING: Message = {
@@ -97,6 +100,7 @@ export const SymptomAssessmentScreen = () => {
           recommended_next_step: data.recommended_next_step,
           warning_signs: data.warning_signs,
           follow_up_questions: data.follow_up_questions,
+          sources: data.sources,
         },
       ]);
     } catch (err: any) {
@@ -176,6 +180,7 @@ export const SymptomAssessmentScreen = () => {
           urgency: data.urgency_level,
           recommended_next_step: data.recommended_next_step,
           warning_signs: data.warning_signs,
+          sources: data.sources,
         },
       ]);
     } catch (err: any) {
@@ -249,6 +254,7 @@ export const SymptomAssessmentScreen = () => {
               {msg.role === "assistant" ? (
                 <AssistantReply
                   content={msg.content}
+                  sources={msg.sources}
                   bodyColor="#1e293b"
                   labelColor="#134e4a"
                   citationColor="#0f766e"

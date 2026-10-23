@@ -3,8 +3,19 @@ import {
   normalizeReplyText,
   parseReplyBlocks,
   replyToPlainText,
+  citedMarkers,
+  sourceDomain,
+  sourceForMarker,
+  sourceLinksForDisplay,
   splitInlineSegments,
+  type ReplySource,
 } from "./replyText";
+
+/** What both renderers do with a resolved source: trim it, or show plain text. */
+const urlFor = (
+  sources: readonly ReplySource[] | null | undefined,
+  marker: string | number
+): string => (sourceForMarker(sources, marker)?.url ?? "").trim();
 
 // Shapes modelled on backend/ai/services/ai_service.py::_mock_conversation,
 // which already joins sections with "\n\n" and emits "[n]" citation lines.
@@ -217,5 +228,179 @@ describe("replyToPlainText", () => {
 
   it("still speaks an error string with no structure", () => {
     expect(replyToPlainText("The assessment failed.")).toBe("The assessment failed.");
+  });
+
+  it("never speaks a URL, a domain or the word citation", () => {
+    const spoken = replyToPlainText(
+      "Cough [1]. See [WHO guidance](https://www.who.int/health-topics/tuberculosis) for details."
+    );
+    expect(spoken).not.toContain("http");
+    expect(spoken).not.toContain("who.int");
+    expect(spoken.toLowerCase()).not.toContain("citation");
+    expect(spoken).toContain("WHO guidance");
+  });
+});
+
+const WHO = "https://www.who.int/health-topics/tuberculosis";
+
+const SOURCES: ReplySource[] = [
+  { index: 1, name: "World Health Organization", title: "Tuberculosis", url: WHO },
+  { index: 2, name: "MoH Rwanda", title: "Integrated Guidelines", url: "" },
+  { index: 3, name: "PubMed", title: "Malaria", url: "https://pubmed.ncbi.nlm.nih.gov/malaria" },
+];
+
+describe("sourceForMarker", () => {
+  it("resolves [n] to sources[n-1]", () => {
+    expect(sourceForMarker(SOURCES, "1")).toBe(SOURCES[0]);
+    expect(sourceForMarker(SOURCES, 3)).toBe(SOURCES[2]);
+    expect(urlFor(SOURCES, "1")).toBe(WHO);
+  });
+
+  it("prefers the explicit index when the array order disagrees with the numbering", () => {
+    const reordered: ReplySource[] = [SOURCES[2], SOURCES[0]];
+    expect(urlFor(reordered, "1")).toBe(WHO);
+    expect(urlFor(reordered, "3")).toBe("https://pubmed.ncbi.nlm.nih.gov/malaria");
+  });
+
+  it("yields nothing for out-of-range, zero, or garbage markers", () => {
+    expect(sourceForMarker(SOURCES, "4")).toBeNull();
+    expect(sourceForMarker(SOURCES, "0")).toBeNull();
+    expect(sourceForMarker(SOURCES, "abc")).toBeNull();
+    expect(urlFor(SOURCES, "4")).toBe("");
+  });
+
+  it("yields nothing without sources", () => {
+    for (const sources of [undefined, null, []] as const) {
+      expect(sourceForMarker(sources, 1)).toBeNull();
+      expect(urlFor(sources, 1)).toBe("");
+    }
+  });
+
+  it("treats an entry with no URL as unlinkable", () => {
+    expect(sourceForMarker(SOURCES, "2")).toBe(SOURCES[1]);
+    expect(urlFor(SOURCES, "2")).toBe("");
+  });
+
+  it("does not crash on a null entry or a non-array shape", () => {
+    expect(sourceForMarker([null as unknown as ReplySource], 1)).toBeNull();
+    expect(urlFor([{ index: 5, url: " https://x.org " }], 5)).toBe("https://x.org");
+  });
+});
+
+describe("sourceDomain", () => {
+  it("strips the scheme, userinfo, port and www.", () => {
+    expect(sourceDomain(WHO)).toBe("who.int");
+    expect(sourceDomain("https://pubmed.ncbi.nlm.nih.gov/malaria")).toBe("pubmed.ncbi.nlm.nih.gov");
+    expect(sourceDomain("http://user:pass@example.com:8080/a?b=1")).toBe("example.com");
+  });
+
+  it("copes with a bare host and with nothing at all", () => {
+    expect(sourceDomain("who.int/tb")).toBe("who.int");
+    expect(sourceDomain("")).toBe("");
+    expect(sourceDomain(undefined)).toBe("");
+  });
+});
+
+describe("sourceLinksForDisplay", () => {
+  it("drops entries without a usable URL and keeps citation order", () => {
+    expect(sourceLinksForDisplay(SOURCES).map((link) => link.marker)).toEqual([1, 3]);
+    expect(sourceLinksForDisplay(SOURCES)[0]).toEqual({
+      url: WHO,
+      domain: "who.int",
+      label: "Tuberculosis",
+      marker: 1,
+    });
+  });
+
+  it("dedupes the same page reached by several markers", () => {
+    const repeated: ReplySource[] = [
+      { index: 1, name: "WHO", title: "Tuberculosis", url: WHO },
+      { index: 2, name: "WHO", title: "Tuberculosis", url: `${WHO}#guidance` },
+      { index: 3, name: "WHO", title: "Tuberculosis", url: `${WHO}/` },
+      { index: 4, name: "PubMed", title: "Malaria", url: "https://pubmed.ncbi.nlm.nih.gov/malaria" },
+    ];
+    const links = sourceLinksForDisplay(repeated);
+    expect(links).toHaveLength(2);
+    expect(links[0].marker).toBe(1);
+    expect(links[1].marker).toBe(4);
+  });
+
+  it("keeps the lowest marker when sources arrive out of order", () => {
+    const swapped: ReplySource[] = [
+      { index: 2, name: "WHO", title: "Tuberculosis", url: WHO },
+      { index: 1, name: "WHO", title: "Tuberculosis", url: `${WHO}#another` },
+    ];
+    expect(sourceLinksForDisplay(swapped)).toEqual([
+      { url: WHO, domain: "who.int", label: "Tuberculosis", marker: 1 },
+    ]);
+  });
+
+  it("falls back to the name, then the domain, when there is no title", () => {
+    const links = sourceLinksForDisplay([
+      { index: 1, name: "MoH Rwanda", url: "https://moh.gov.rw/x" },
+      { index: 2, url: "https://cidm.org/" },
+    ]);
+    expect(links.map((link) => link.label)).toEqual(["MoH Rwanda", "cidm.org"]);
+  });
+
+  it("is empty for no sources or no usable URLs", () => {
+    expect(sourceLinksForDisplay(undefined)).toEqual([]);
+    expect(sourceLinksForDisplay([])).toEqual([]);
+    expect(sourceLinksForDisplay([{ index: 1, name: "WHO" }, { index: 2, url: "   " }])).toEqual([]);
+  });
+});
+
+
+describe("citedMarkers", () => {
+  it("lists the numbers the reply actually cites, first-appearance order", () => {
+    expect(citedMarkers("Fever [2] and headache [1], sometimes [2].")).toEqual([2, 1]);
+  });
+
+  it("ignores brackets that are not citations", () => {
+    expect(citedMarkers("dose [0] and no marker here")).toEqual([]);
+  });
+
+  it("reads markers that survive markdown cleanup", () => {
+    expect(citedMarkers("**Meningitis** [3]")).toEqual([3]);
+  });
+});
+
+describe("sourceLinksForDisplay with cited markers", () => {
+  const SOURCES: ReplySource[] = [
+    { index: 1, title: "Headache", url: "https://www.who.int/headache" },
+    { index: 2, title: "Meningitis", url: "https://www.who.int/meningitis" },
+    { index: 3, title: "Malaria", url: "https://www.who.int/malaria" },
+  ];
+
+  it("shows only the pages the answer points at", () => {
+    const rows = sourceLinksForDisplay(SOURCES, citedMarkers("See [2]."));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].url).toBe("https://www.who.int/meningitis");
+  });
+
+  it("hides the strip entirely when the reply cites nothing", () => {
+    expect(sourceLinksForDisplay(SOURCES, citedMarkers("No markers here."))).toEqual([]);
+  });
+
+  it("still lists a page once when two cited markers share it", () => {
+    const shared: ReplySource[] = [
+      { index: 1, title: "Fever", url: "https://moh.gov.rw/fever" },
+      { index: 4, title: "Fever (same page)", url: "https://moh.gov.rw/fever/" },
+    ];
+
+    const rows = sourceLinksForDisplay(shared, citedMarkers("[4] then [1]"));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].marker).toBe(1);
+  });
+
+  it("numbers the row by the marker the reader sees", () => {
+    const shared: ReplySource[] = [
+      { index: 1, title: "Fever", url: "https://moh.gov.rw/fever" },
+      { index: 4, title: "Fever (same page)", url: "https://moh.gov.rw/fever" },
+    ];
+
+    expect(sourceLinksForDisplay(shared, citedMarkers("only [4]"))[0].marker).toBe(4);
   });
 });

@@ -895,24 +895,22 @@ class AIService:
         evidence_lines = []
         for index, item in enumerate(evidence[:3], 1):
             snippet = (item.get("content") or "").strip().split(".")[0][:180]
-            evidence_lines.append(
-                f"[{index}] {item.get('title')} — {item.get('source_name')}: {snippet}."
-            )
+            evidence_lines.append(f"[{index}] {item.get('title')}: {snippet}.")
         if evidence_lines:
             if language == "rw":
-                lines.append("Amakuru yakuwe mu nkomoko z'ubuvuzi zemewe:\n" + "\n".join(evidence_lines))
+                lines.append("Amakuru y'ubuzima bijyanye n'ibyo mugaragaza:\n" + "\n".join(evidence_lines))
             else:
-                lines.append("From trusted sources:\n" + "\n".join(evidence_lines))
+                lines.append("Health information relevant to what you described:\n" + "\n".join(evidence_lines))
         else:
             if language == "rw":
                 lines.append(
-                    "Ntabwo nabonye amabwiriza ahagije mu nkomoko zemewe z'ubuvuzi. "
-                    "Ni ngombwa kugisha inama umuganga cyangwa inzobere mu buvuzi."
+                    "Ntabwo mfite amakuru ahagije yo gusobanura iki kibazo neza. "
+                    "Umuganga mubasha gusuzumwa ni we wbasha kubibabwira."
                 )
             else:
                 lines.append(
-                    "I couldn't find guidance on this in the approved medical sources yet; "
-                    "a healthcare professional can help with this directly."
+                    "I don't have enough health information to explain this one safely; "
+                    "a clinician who can examine you is the right person to ask."
                 )
 
         if general_information:
@@ -965,24 +963,22 @@ class AIService:
         evidence_lines = []
         for index, item in enumerate(evidence[:4], 1):
             snippet = (item.get("content") or "").strip().split(".")[0][:220]
-            evidence_lines.append(
-                f"[{index}] {item.get('title')} — {item.get('source_name')}: {snippet}."
-            )
+            evidence_lines.append(f"[{index}] {item.get('title')}: {snippet}.")
 
         rw = language == "rw"
         lines = []
         if evidence_lines:
             lines.append(
-                ("Incamake y'amabwiriza yakuwe mu nkomoko z'ubuvuzi zemewe:\n"
+                ("Ingingo zifitanye isano n'iki kibazo:\n"
                  if rw
-                 else "From the approved medical sources for your query:\n")
+                 else "Points relevant to this query:\n")
                 + "\n".join(evidence_lines)
             )
         else:
             lines.append(
-                "Ntabwo nabonye inyandiko ihuye n'ikibazo mwabajije mu nkomoko zemewe."
+                "Nta kibazo kihuye n'iki kibazo kiboneka hano; genzura amabwiriza y'aho mukora."
                 if rw
-                else "No matching guidance was found in the approved medical sources for this query."
+                else "Nothing matching this query is available here; confirm against local guidance."
             )
 
         if fallback_reason:
@@ -1035,20 +1031,18 @@ class AIService:
             "evidence": evidence,
         }
 
-    def _evidence_sources(self, evidence: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-        sources = []
-        seen = set()
-        for item in evidence:
-            key = item.get("url") or item.get("title")
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            sources.append({
+    def _evidence_sources(self, evidence: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """One entry per evidence item, numbered exactly like the prompt's evidence
+        block, so a [n] marker in the reply resolves to sources[n-1]."""
+        return [
+            {
+                "index": index,
                 "name": item.get("source_name") or "Unknown",
                 "title": item.get("title") or "",
                 "url": item.get("url") or "",
-            })
-        return sources
+            }
+            for index, item in enumerate(evidence, 1)
+        ]
 
     def _normalize_urgency(self, value: Any) -> str:
         urgency = str(value or "").upper()

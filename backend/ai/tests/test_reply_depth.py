@@ -48,9 +48,29 @@ def test_prompt_keeps_grounding_and_safety_rules_intact():
     prompt = get_chat_system_prompt(evidence_block=EVIDENCE_SAMPLE, language="en")
 
     assert "NEVER invent medications" in prompt
-    assert "Ground every medical statement in the TRUSTED EVIDENCE" in prompt
+    assert "Base every medical statement on the reference material below" in prompt
     assert "never tell a patient to start, stop, or change a medicine" in prompt
     assert "Cite evidence inline by its number" in prompt
+
+
+def test_prompt_forbids_narrating_where_the_answer_came_from():
+    """Patients should get a direct answer, not "according to our trusted sources"."""
+    for prompt in (
+        get_chat_system_prompt(evidence_block=EVIDENCE_SAMPLE, language="en"),
+        get_professional_system_prompt(evidence_block=EVIDENCE_SAMPLE, language="en"),
+    ):
+        assert "VOICE (mandatory)" in prompt
+        assert "NEVER describe how you obtained your answer" in prompt
+        assert "according to trusted sources" in prompt  # listed as a banned phrase
+        assert "the marker and the links shown by the interface" in prompt
+
+
+def test_reference_material_is_not_presented_to_the_patient_as_sources():
+    """The grounding instruction must not leak into the answer's own vocabulary."""
+    prompt = get_chat_system_prompt(evidence_block=EVIDENCE_SAMPLE, language="en")
+
+    assert "Ground every medical statement in the TRUSTED EVIDENCE" not in prompt
+    assert "what the evidence implies" not in prompt
 
 
 def test_depth_rules_work_in_kinyarwanda_and_keep_the_language_rules():
@@ -274,3 +294,52 @@ def test_normal_newlines_are_left_alone():
     )
 
     assert "\n- Meningitis" in result["reply"]
+
+
+def _evidence():
+    return [
+        {
+            "title": "Fever Guidance",
+            "source_name": "World Health Organization",
+            "url": "https://www.who.int/fever",
+            "content": "Fever is a raised temperature; check for neck stiffness.",
+        },
+        {
+            "title": "Meningitis",
+            "source_name": "World Health Organization",
+            "url": "https://www.who.int/meningitis",
+            "content": "Neck stiffness with confusion needs urgent care.",
+        },
+    ]
+
+
+def test_offline_fallback_reply_does_not_narrate_sources():
+    reply = AIService()._mock_conversation(
+        "I have a fever and a stiff neck",
+        [{"role": "user", "content": "I have a fever and a stiff neck"}],
+        None,
+        None,
+        _evidence(),
+    )["reply"]
+
+    for banned in ("trusted sources", "approved medical sources", "nkomoko", "i searched"):
+        assert banned not in reply.lower()
+    assert "[1]" in reply
+
+
+def test_citation_markers_map_onto_the_sources_array():
+    """[n] in the reply must resolve to sources[n-1] so the UI can link it."""
+    sources = AIService()._evidence_sources(_evidence())
+
+    assert [item["index"] for item in sources] == [1, 2]
+    assert sources[0]["url"] == "https://www.who.int/fever"
+    assert sources[1]["name"] == "World Health Organization"
+
+
+def test_duplicate_urls_keep_their_own_numbers():
+    evidence = _evidence() + [_evidence()[0]]
+
+    sources = AIService()._evidence_sources(evidence)
+
+    assert [item["index"] for item in sources] == [1, 2, 3]
+    assert sources[2]["url"] == sources[0]["url"]

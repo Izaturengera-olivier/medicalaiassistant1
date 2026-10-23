@@ -2,6 +2,8 @@
 
 import json
 import logging
+import re
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
@@ -12,6 +14,13 @@ from core.exceptions import AIServiceError, AIResponseTruncatedError
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
+
+# A free-tier Groq key allows ~8000 tokens per minute and one detailed answer costs
+# 6k-7k, so a 429 is what two simultaneous questions look like rather than a rare
+# outage. Waiting out a short window beats the plain-text fallback for the patient,
+# but a long window must not stall the chat.
+RATE_LIMIT_MAX_WAIT = 25.0
+RATE_LIMIT_DEFAULT_WAIT = 8.0
 
 # Reasoning models (openai/gpt-oss-20b on Groq) spend much of the completion on
 # hidden reasoning tokens before emitting any JSON. Under the provider default
@@ -89,30 +98,36 @@ class OpenAICompatibleProvider(LLMProvider):
         messages: List[Dict[str, str]],
         schema: Dict[str, Any],
     ) -> Dict[str, Any]:
-        try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "messages": self._with_schema(messages, schema),
-                    "temperature": 0.3,
-                    "max_tokens": self.max_tokens,
-                    "response_format": {"type": "json_object"},
-                },
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-        except requests.HTTPError as exc:
-            # The status line says "400 Bad Request"; the provider puts the actual
-            # reason (unknown model, bad param, quota) in the response body.
-            body = getattr(exc.response, "text", "") or ""
-            raise AIServiceError(f"LLM request failed: {exc} — {body[:500]}") from exc
-        except requests.RequestException as exc:
-            raise AIServiceError(f"LLM request failed: {exc}") from exc
+        for attempt in (1, 2):
+            try:
+                response = requests.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self.model,
+                        "messages": self._with_schema(messages, schema),
+                        "temperature": 0.3,
+                        "max_tokens": self.max_tokens,
+                        "response_format": {"type": "json_object"},
+                    },
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                break
+            except requests.HTTPError as exc:
+                wait = self._rate_limit_wait(exc) if attempt == 1 else None
+                if wait is None:
+                    # The status line says "400 Bad Request"; the provider puts the
+                    # actual reason (unknown model, bad param, quota) in the body.
+                    body = getattr(exc.response, "text", "") or ""
+                    raise AIServiceError(f"LLM request failed: {exc} — {body[:500]}") from exc
+                logger.warning("LLM rate limited, retrying once in %.0fs", wait)
+                time.sleep(wait)
+            except requests.RequestException as exc:
+                raise AIServiceError(f"LLM request failed: {exc}") from exc
 
         try:
             payload = response.json()
@@ -151,6 +166,21 @@ class OpenAICompatibleProvider(LLMProvider):
             logger.warning("LLM generation stopped early: finish_reason=%s", finish_reason)
 
         return self._parse_json(content)
+
+    @staticmethod
+    def _rate_limit_wait(exc: requests.HTTPError) -> Optional[float]:
+        """Seconds to wait before one retry on a rate limit, or None if not retryable."""
+        response = getattr(exc, "response", None)
+        if response is None or response.status_code != 429:
+            return None
+
+        header = (getattr(response, "headers", None) or {}).get("Retry-After", "")
+        try:
+            wait = float(str(header).strip())
+        except (TypeError, ValueError):
+            match = re.search(r"try again in ([0-9]+(?:\.[0-9]+)?)s", response.text or "")
+            wait = float(match.group(1)) if match else RATE_LIMIT_DEFAULT_WAIT
+        return wait if 0 < wait <= RATE_LIMIT_MAX_WAIT else None
 
     @staticmethod
     def _with_schema(

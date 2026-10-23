@@ -15,10 +15,11 @@ from ai.providers import (
 
 
 class _FakeResponse:
-    def __init__(self, payload, status_code=200, text=""):
+    def __init__(self, payload, status_code=200, text="", headers=None):
         self._payload = payload
         self.status_code = status_code
         self.text = text
+        self.headers = headers or {}
 
     def json(self):
         return self._payload
@@ -150,3 +151,100 @@ def test_complete_structured_raises_on_unexpected_shape(monkeypatch):
     provider = OpenAICompatibleProvider(api_key="k", model="m")
     with pytest.raises(AIServiceError):
         provider.complete_structured([], {})
+
+
+def _ok_response():
+    return _FakeResponse({
+        "choices": [
+            {"message": {"content": '{"reply": "detailed answer"}'}, "finish_reason": "stop"}
+        ]
+    })
+
+
+def _patch_sleep(monkeypatch):
+    slept = []
+    monkeypatch.setattr(
+        "ai.providers.time.sleep", lambda seconds: slept.append(seconds)
+    )
+    return slept
+
+
+def test_rate_limit_retry_recovers_from_a_short_window(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_post(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _FakeResponse({}, status_code=429, headers={"Retry-After": "3"})
+        return _ok_response()
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    slept = _patch_sleep(monkeypatch)
+
+    provider = OpenAICompatibleProvider(api_key="k", model="m")
+    result = provider.complete_structured([], {})
+
+    assert result["reply"] == "detailed answer"
+    assert calls["n"] == 2
+    assert slept == [3.0]
+
+
+def test_rate_limit_falls_back_immediately_when_the_window_is_too_long(monkeypatch):
+    """A two-minute wait must not stall the chat; the fallback answers instead."""
+    calls = {"n": 0}
+
+    def fake_post(*args, **kwargs):
+        calls["n"] += 1
+        return _FakeResponse({}, status_code=429, headers={"Retry-After": "120"})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    slept = _patch_sleep(monkeypatch)
+
+    provider = OpenAICompatibleProvider(api_key="k", model="m")
+    with pytest.raises(AIServiceError, match="429"):
+        provider.complete_structured([], {})
+
+    assert calls["n"] == 1
+    assert slept == []
+
+
+def test_rate_limit_reads_the_groq_retry_hint_from_the_body(monkeypatch):
+    """Groq names the wait in its message, not always in a Retry-After header."""
+    calls = {"n": 0}
+
+    def fake_post(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _FakeResponse(
+                {},
+                status_code=429,
+                text="Rate limit reached for model on tokens per minute (TPM): "
+                     "Limit 8000, Used 4672, Requested 6248. Please try again in 21.9s.",
+            )
+        return _ok_response()
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    slept = _patch_sleep(monkeypatch)
+
+    provider = OpenAICompatibleProvider(api_key="k", model="m")
+    assert provider.complete_structured([], {})["reply"] == "detailed answer"
+
+    assert slept == [21.9]
+
+
+def test_a_second_rate_limit_is_not_retried_again(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_post(*args, **kwargs):
+        calls["n"] += 1
+        return _FakeResponse({}, status_code=429, headers={"Retry-After": "1"})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    slept = _patch_sleep(monkeypatch)
+
+    provider = OpenAICompatibleProvider(api_key="k", model="m")
+    with pytest.raises(AIServiceError, match="429"):
+        provider.complete_structured([], {})
+
+    assert calls["n"] == 2
+    assert slept == [1.0]

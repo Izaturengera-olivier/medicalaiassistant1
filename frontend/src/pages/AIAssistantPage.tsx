@@ -33,6 +33,7 @@ interface TrustedSolution {
 }
 
 interface Source {
+  index?: number;
   name?: string;
   title?: string;
   url?: string;
@@ -331,7 +332,7 @@ export function AIAssistantPage() {
 
                     {m.role === "assistant" ? (
                       <div className="chatgpt-msg-content chatgpt-msg-content--rich">
-                        <AssistantReply content={m.content} />
+                        <AssistantReply content={m.content} sources={m.details?.sources} />
                       </div>
                     ) : (
                       <div className="chatgpt-msg-content">{m.content}</div>
