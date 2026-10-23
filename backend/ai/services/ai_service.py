@@ -20,10 +20,10 @@ logger = logging.getLogger(__name__)
 
 CONVERSATION_SCHEMA = {
     "reply": (
-        "the full detailed answer to the patient (roughly 300-600 words for clinical queries), "
-        "providing deep explanations of what it means, bodily mechanisms, what to do safely, "
-        "what to watch for, and follow-up questions; blank-line-separated sections with short "
-        "plain-text labels, \"- \" bullets, inline [1] citations, NO markdown"
+        "the full detailed answer to the patient (roughly 150-300 words for clinical queries, "
+        "~350 when several serious differentials apply), explaining what it could mean, why it "
+        "happens, what to do safely, what to watch for, and follow-up questions; blank-line-separated "
+        "sections with short plain-text labels, \"- \" bullets, inline [1] citations, NO markdown"
     ),
     "symptoms_identified": ["symptom the patient reported"],
     "follow_up_questions": ["question to ask the patient (max 3, never repeat answered ones)"],
@@ -45,10 +45,11 @@ CONVERSATION_SCHEMA = {
 
 PROFESSIONAL_SCHEMA = {
     "reply": (
-        "the full clinician-level analysis (roughly 300-600 words of rigorous plain text): differentials "
-        "with discriminating features, pathophysiological mechanisms, guideline synthesis, workup, "
-        "pharmacological considerations, red flags, and gaps; blank-line-separated sections with "
-        "short plain-text labels, \"- \" bullets, inline [1] citations, NO markdown"
+        "the full clinician-level analysis (roughly 200-350 words of rigorous plain text): ranked "
+        "differentials with discriminating features, mechanism, what the evidence says with [n] "
+        "citations, workup, dosing and interaction considerations, red flags, and gaps; "
+        "blank-line-separated sections with short plain-text labels, \"- \" bullets, inline [1] "
+        "citations, NO markdown"
     ),
     "symptoms_identified": ["symptom or clinical finding mentioned in the case"],
     "follow_up_questions": [
@@ -781,18 +782,35 @@ class AIService:
         messages.append({"role": "user", "content": message})
         return messages
 
+    @staticmethod
+    def _plain_text(value: Any) -> str:
+        """Make the model's text safe for a plain-text renderer and for speech.
+
+        Measured live: the reasoning model sometimes double-escapes line breaks, so
+        the parsed JSON string contains a literal backslash-n. In a
+        ``white-space: pre-wrap`` block that shows up as visible "\n" noise and a
+        text-to-speech reader says it out loud, so it is normalised here. Real
+        newlines parse without a backslash and are untouched.
+        """
+        text = str(value or "")
+        if "\\n" in text:
+            text = text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t")
+        return text.strip()
+
     def _normalize_result(
         self, raw: Dict[str, Any], evidence: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         urgency_level = self._normalize_urgency(raw.get("urgency_level"))
-        warning_signs = [str(w) for w in raw.get("warning_signs") or []][:10]
+        warning_signs = [
+            self._plain_text(w) for w in raw.get("warning_signs") or [] if self._plain_text(w)
+        ][:10]
         urgency_level = self._enforce_urgency_floor(urgency_level, warning_signs)
 
-        general_information = str(raw.get("general_information") or "")
-        recommended_next_step = str(
+        general_information = self._plain_text(raw.get("general_information"))
+        recommended_next_step = self._plain_text(
             raw.get("recommended_next_step") or self._generate_recommendation(urgency_level)
         )
-        reply = str(raw.get("reply") or "").strip()
+        reply = self._plain_text(raw.get("reply"))
         if not reply:
             reply = " ".join(part for part in (general_information, recommended_next_step) if part)
 

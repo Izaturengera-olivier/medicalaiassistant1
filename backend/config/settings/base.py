@@ -44,6 +44,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -87,19 +88,22 @@ if _database_url.startswith("postgres"):
     }
     # Parse simple postgres://user:pass@host:port/db URLs without extra deps.
     try:
-        from urllib.parse import urlparse
+        from urllib.parse import parse_qs, urlparse
 
         parsed = urlparse(_database_url)
         if parsed.hostname:
-            DATABASES["default"].update(
-                {
-                    "NAME": parsed.path.lstrip("/") or "cds",
-                    "USER": parsed.username or "cds_user",
-                    "PASSWORD": parsed.password or "",
-                    "HOST": parsed.hostname,
-                    "PORT": str(parsed.port or 5432),
-                }
-            )
+            db_config = {
+                "NAME": parsed.path.lstrip("/") or "cds",
+                "USER": parsed.username or "cds_user",
+                "PASSWORD": parsed.password or "",
+                "HOST": parsed.hostname,
+                "PORT": str(parsed.port or 5432),
+            }
+            query_params = parse_qs(parsed.query)
+            ssl_mode = query_params.get("sslmode", [None])[0] or os.environ.get("POSTGRES_SSLMODE")
+            if ssl_mode:
+                db_config["OPTIONS"] = {"sslmode": ssl_mode}
+            DATABASES["default"].update(db_config)
     except ValueError:
         pass
 else:

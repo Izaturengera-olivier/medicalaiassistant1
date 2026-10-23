@@ -35,7 +35,7 @@ const NUMBERED_RE = /^\d{1,2}[.)]\s+(.*)$/;
 /** How terse a label line may be before we stop trusting it as a heading. */
 const MAX_LABEL_CHARS = 72;
 const MAX_LABEL_WORDS_COLON = 12;
-const MAX_LABEL_WORDS_BARE = 5;
+const MAX_LABEL_WORDS_BARE = 6;
 
 function collapseInlineWhitespace(text: string): string {
   return text
@@ -58,7 +58,7 @@ export function normalizeReplyText(raw: string | null | undefined): string {
     .replace(/\r\n?/g, "\n")
     .replace(/[\u00a0\u200b]/g, " ")
     .split("\n")
-    .filter((line) => !/^\s*(?:[-*_])\s*(?:\1\s*){2,}$/.test(line)) // horizontal rules: ---, *** ___
+    .filter((line) => !/^\s*([-*_])[ \t]*(?:\1[ \t]*){2,}$/.test(line)) // horizontal rules: ---, *** ___, - - -
     .map((line) =>
       line
         .replace(/^\s{0,3}#{1,6}\s+/, "") // "### Section" -> "Section"
@@ -128,13 +128,17 @@ function matchListLine(line: string): ListLine | null {
 
 /**
  * A short standalone line that titles the content under it, e.g.
- * "What this could mean:", "Red flags", "Ibyo wagera".
+ * "What this could mean:", "Red flags", "What you can do now", "Ibyo wagera".
  *
- * Colon-terminated lines are always labels (that is the shape the prompt asks
- * for). A label without a colon is only trusted when it heads other content or
- * is very short, so an ordinary short sentence is not demoted to a heading.
+ * A colon-terminated line is always treated as a label — that is the shape the
+ * prompt asks for. A label *without* a colon is only trusted when the very next
+ * content is a list: word count alone cannot separate the heading "Red flags"
+ * from the first half of a hard-wrapped sentence such as "Shortness of breath
+ * when walking / improved after rest", and mislabelling prose would restyle a
+ * patient's sentence as a heading. A bare line heading prose therefore stays a
+ * paragraph, which is the safe direction (nothing is lost, only emphasised).
  */
-function isSectionLabel(line: string, headsContent: boolean): boolean {
+function isSectionLabel(line: string, headsList: boolean): boolean {
   const text = line.trim();
   if (!text || text.length > MAX_LABEL_CHARS) return false;
   if (matchListLine(text)) return false;
@@ -142,8 +146,7 @@ function isSectionLabel(line: string, headsContent: boolean): boolean {
 
   const words = text.split(/\s+/);
   if (/:\s*$/.test(text)) return words.length <= MAX_LABEL_WORDS_COLON;
-  if (!headsContent) return false;
-  return words.length <= MAX_LABEL_WORDS_BARE;
+  return headsList && words.length <= MAX_LABEL_WORDS_BARE;
 }
 
 /** Turn a reply into ordered display blocks. */
@@ -151,17 +154,23 @@ export function parseReplyBlocks(raw: string | null | undefined): ReplyBlock[] {
   const normalized = normalizeReplyText(raw);
   if (!normalized) return [];
 
+  const groups = normalized
+    .split(/\n{2,}/)
+    .map((group) => group.split("\n").map((line) => line.trim()).filter(Boolean))
+    .filter((lines) => lines.length > 0);
+
   const blocks: ReplyBlock[] = [];
 
-  for (const group of normalized.split(/\n{2,}/)) {
-    const lines = group
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    if (!lines.length) continue;
+  groups.forEach((lines, groupIndex) => {
+    const nextGroup = groups[groupIndex + 1];
+    // Does the content this line introduces read as a list? Look at the next
+    // line, or — for a label alone in its own block — the next block's first.
+    const headsList = lines.length > 1
+      ? Boolean(matchListLine(lines[1]))
+      : Boolean(nextGroup && matchListLine(nextGroup[0]));
 
     let index = 0;
-    if (isSectionLabel(lines[0], lines.length > 1)) {
+    if (isSectionLabel(lines[0], headsList)) {
       blocks.push({ kind: "label", text: lines[0] });
       index = 1;
     }
@@ -187,7 +196,7 @@ export function parseReplyBlocks(raw: string | null | undefined): ReplyBlock[] {
       }
       blocks.push({ kind: "paragraph", text: paragraph.join("\n") });
     }
-  }
+  });
 
   return blocks;
 }

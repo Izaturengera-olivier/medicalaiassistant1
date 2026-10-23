@@ -10,3 +10,5 @@ requests>=2.32,<3
 pypdf>=5.0.0
 pillow>=10.0.0
 pytesseract>=0.3.13
+gunicorn>=23.0.0
+whitenoise>=6.8.0

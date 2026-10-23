@@ -103,7 +103,7 @@ describe("parseReplyBlocks", () => {
   it("never shows markdown punctuation in parsed blocks", () => {
     const blocks = parseReplyBlocks(CHATGPT_STYLE_REPLY);
     const flat = JSON.stringify(blocks);
-    expect(flat).not.toMatch(/\\*\\*/);
+    expect(flat).not.toContain("**");
     expect(flat).not.toContain("###");
     expect(flat).not.toContain("```");
     expect(flat).not.toContain("---");

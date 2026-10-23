@@ -13,16 +13,19 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
-# Reasoning models (openai/gpt-oss-20b on Groq) spend most of the completion on
+# Reasoning models (openai/gpt-oss-20b on Groq) spend much of the completion on
 # hidden reasoning tokens before emitting any JSON. Under the provider default
 # budget the content comes back empty and Groq rejects the call with
 # 400 json_validate_failed, which silently degrades users to the mock template.
-# The budget has to cover hidden reasoning PLUS a deliberately long, sectioned
-# plain-text reply (150-350 words) plus the rest of the JSON object, so it is set
-# well above the visible answer size. Measured against the real Groq endpoint:
-# a 300-word cited reply with the full JSON payload lands around 900-1300
-# completion tokens including reasoning, and anything clipped by the cap now
-# raises AIResponseTruncatedError instead of passing silently.
+# The budget must cover hidden reasoning PLUS a deliberately long, sectioned
+# plain-text reply PLUS the rest of the JSON object. Measured on the live Groq
+# endpoint with the depth prompts (3 cases: patient EN, patient Kinyarwanda,
+# clinician EN): completion_tokens 3339-3653 with finish_reason=stop, so the old
+# 4096 cap left only ~12% headroom and would clip the first slightly longer
+# answer. 8192 is accepted by the endpoint and doubles that margin; anything
+# clipped now raises AIResponseTruncatedError instead of passing silently.
+# Prompt side measured 2654-4058 tokens, i.e. ~6.1k-7.4k tokens per call against
+# the ~8k tokens/minute free-tier quota: about one call per minute sustained.
 DEFAULT_MAX_TOKENS = 8192
 
 
