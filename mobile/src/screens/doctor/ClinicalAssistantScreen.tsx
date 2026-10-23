@@ -12,6 +12,7 @@ import {
   Platform,
 } from "react-native";
 import { aiAPI } from "../../services/api";
+import { AssistantReply } from "../../components/AssistantReply";
 
 interface ChatTurn {
   role: "user" | "assistant";
@@ -125,9 +126,11 @@ export const ClinicalAssistantScreen = () => {
                 m.role === "user" ? styles.userBubble : styles.assistantBubble,
               ]}
             >
-              <Text style={[styles.bubbleText, m.role === "user" ? styles.userText : styles.assistantText]}>
-                {m.content}
-              </Text>
+              {m.role === "assistant" ? (
+                <AssistantReply content={m.content} bodyColor="#1e293b" />
+              ) : (
+                <Text style={[styles.bubbleText, styles.userText]}>{m.content}</Text>
+              )}
 
               {m.recommended_next_step && (
                 <View style={styles.recBox}>

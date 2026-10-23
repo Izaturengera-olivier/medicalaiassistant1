@@ -170,6 +170,26 @@ export const authAPI = {
   getMe: () => mobileAPI.get("/auth/me/"),
 };
 
+export interface DocumentAnalysis {
+  document_id: number;
+  file_name: string;
+  document_category: string;
+  exam_type: string;
+  document_summary: string;
+  scan_findings: string[];
+  abnormalities: string[];
+  possible_conditions: PossibleCondition[];
+  warning_signs: string[];
+  urgency_level: string;
+  trusted_solutions: string[];
+  recommended_next_step: string;
+  reply: string;
+  sources: KnowledgeSource[];
+  conversation_id: number;
+  consultation_id: number | null;
+  confidence: number;
+}
+
 export const aiAPI = {
   analyzeSymptoms: (data: {
     patient_input: string;
@@ -182,6 +202,12 @@ export const aiAPI = {
     history?: ChatHistoryTurn[];
     conversation_id?: number;
   }) => mobileAPI.post<AssessmentResult>("/ai/professional-chat/", data),
+  // Multipart body: RN FormData takes { uri, name, type } for file parts.
+  uploadAndAnalyze: (formData: FormData) =>
+    mobileAPI.post<DocumentAnalysis>("/ai/upload-and-analyze/", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 180000,
+    }),
 };
 
 export const consultationsAPI = {

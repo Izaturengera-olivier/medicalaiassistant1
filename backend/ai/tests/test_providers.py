@@ -7,6 +7,7 @@ from core.exceptions import AIServiceError
 
 from ai.providers import (
     DEFAULT_BASE_URL,
+    DEFAULT_MAX_TOKENS,
     MockLLMProvider,
     OpenAICompatibleProvider,
     get_llm_provider,
@@ -91,6 +92,9 @@ def test_complete_structured_parses_json(monkeypatch):
     assert captured["url"] == f"{DEFAULT_BASE_URL}/chat/completions"
     assert captured["headers"]["Authorization"] == "Bearer secret"
     assert captured["body"]["model"] == "gpt-4o-mini"
+    # Reasoning models spend the completion budget on hidden tokens first; without
+    # an explicit budget Groq returns empty content and a 400 json_validate_failed.
+    assert captured["body"]["max_tokens"] == DEFAULT_MAX_TOKENS
     # The schema instruction is appended to the existing system message.
     assert "matching this schema" in captured["body"]["messages"][0]["content"]
     assert captured["body"]["messages"][1] == {"role": "user", "content": "fever"}

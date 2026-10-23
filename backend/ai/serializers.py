@@ -3,7 +3,27 @@
 from rest_framework import serializers
 from django.utils.translation import gettext_lazy as _
 
-from .models import AIAssessment, ChatConversation, ChatMessage, PossibleCondition
+from .models import AIAssessment, ChatConversation, ChatMessage, MedicalDocument, PossibleCondition
+
+
+class MedicalDocumentSerializer(serializers.ModelSerializer):
+    """Serializer for uploaded medical documents and scanner reports."""
+
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MedicalDocument
+        fields = [
+            "id", "file", "file_name", "file_type", "file_size",
+            "document_category", "extracted_text", "ai_analysis",
+            "file_url", "created_at"
+        ]
+        read_only_fields = ["id", "file_size", "created_at"]
+
+    def get_file_url(self, obj) -> str:
+        if obj.file:
+            return obj.file.url
+        return ""
 
 
 class PossibleConditionSerializer(serializers.ModelSerializer):
@@ -118,9 +138,11 @@ class AIAnalysisResponseSerializer(serializers.Serializer):
 class ChatMessageSerializer(serializers.ModelSerializer):
     """A saved message inside a chat conversation."""
 
+    document = MedicalDocumentSerializer(read_only=True)
+
     class Meta:
         model = ChatMessage
-        fields = ["id", "role", "content", "details", "created_at"]
+        fields = ["id", "role", "content", "details", "document", "created_at"]
 
 
 class ChatConversationListSerializer(serializers.ModelSerializer):
@@ -138,3 +160,53 @@ class ChatConversationDetailSerializer(ChatConversationListSerializer):
 
     class Meta(ChatConversationListSerializer.Meta):
         fields = ChatConversationListSerializer.Meta.fields + ["messages"]
+
+
+class DocumentUploadAnalysisRequestSerializer(serializers.Serializer):
+    """Multipart upload request for medical document / scanner analysis."""
+
+    file = serializers.FileField(help_text=_("Uploaded medical scan report or lab file"))
+    message = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        help_text=_("Optional patient or clinician prompt/question")
+    )
+    consultation_id = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        help_text=_("Consultation ID if attaching to consultation")
+    )
+    conversation_id = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        help_text=_("Conversation ID if continuing a chat")
+    )
+    kind = serializers.ChoiceField(
+        choices=["patient", "professional"],
+        required=False,
+        default="patient"
+    )
+
+
+class DocumentAnalysisResponseSerializer(serializers.Serializer):
+    """Structured response for uploaded scanner / medical report analysis."""
+
+    document_id = serializers.IntegerField()
+    file_name = serializers.CharField()
+    file_url = serializers.CharField(required=False, allow_blank=True)
+    document_category = serializers.CharField()
+    exam_type = serializers.CharField()
+    document_summary = serializers.CharField()
+    scan_findings = serializers.ListField(child=serializers.DictField())
+    abnormalities = serializers.ListField(child=serializers.CharField())
+    possible_conditions = serializers.ListField(child=serializers.DictField())
+    warning_signs = serializers.ListField(child=serializers.CharField())
+    urgency_level = serializers.CharField()
+    trusted_solutions = serializers.ListField(child=serializers.DictField())
+    recommended_next_step = serializers.CharField()
+    reply = serializers.CharField()
+    sources = serializers.ListField(child=serializers.DictField())
+    conversation_id = serializers.IntegerField(required=False)
+    consultation_id = serializers.IntegerField(required=False, allow_null=True)
+    confidence = serializers.FloatField(required=False, default=0.9)

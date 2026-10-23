@@ -129,11 +129,12 @@ export const router = createBrowserRouter([
         ),
       },
 
-      // Shared clinical AI assistant (doctor / pharmacist / admin)
+      // Shared clinical AI assistant with report upload (all signed-in roles;
+      // the page picks the patient or clinician endpoint per role)
       {
         path: "ai-assistant",
         element: (
-          <RoleGate roles={["DOCTOR", "PHARMACIST", "ADMIN"]}>
+          <RoleGate roles={["DOCTOR", "PHARMACIST", "ADMIN", "PATIENT"]}>
             <AIAssistantPage />
           </RoleGate>
         ),

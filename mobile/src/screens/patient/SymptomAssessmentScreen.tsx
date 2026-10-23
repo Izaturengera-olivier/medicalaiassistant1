@@ -11,7 +11,9 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
+import * as DocumentPicker from "expo-document-picker";
 import { aiAPI, consultationsAPI } from "../../services/api";
+import { AssistantReply } from "../../components/AssistantReply";
 
 interface Message {
   role: "user" | "assistant";
@@ -34,6 +36,10 @@ const GREETING: Message = {
 const NETWORK_ERROR =
   "Cannot reach the server. Check that the backend is running and that your device can reach it.";
 
+// Mirrors DocumentParserService.MAX_FILE_SIZE_BYTES; rejecting early gives the
+// patient a usable message instead of a server error after a slow upload.
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
 export const SymptomAssessmentScreen = () => {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([GREETING]);
@@ -42,11 +48,12 @@ export const SymptomAssessmentScreen = () => {
   // new ChatConversation (and orphaned assessment) for every message.
   const [conversationId, setConversationId] = useState<number | null>(null);
   const [consultationId, setConsultationId] = useState<number | null>(null);
+  const [attaching, setAttaching] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
   const send = async (text: string) => {
     const userMsg = text.trim();
-    if (!userMsg || loading) return;
+    if (!userMsg || loading || attaching) return;
     setInput("");
 
     const prior = [...messages, { role: "user" as const, content: userMsg }];
@@ -109,6 +116,85 @@ export const SymptomAssessmentScreen = () => {
     }
   };
 
+  const attachReport = async () => {
+    if (loading || attaching) return;
+
+    const picked = await DocumentPicker.getDocumentAsync({
+      type: [
+        "application/pdf",
+        "image/*",
+        "text/plain",
+        "text/csv",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ],
+      copyToCacheDirectory: true,
+    });
+    if (picked.canceled) return;
+    const asset = picked.assets[0];
+    if (!asset) return;
+
+    if (asset.size && asset.size > MAX_UPLOAD_BYTES) {
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", content: "That file is larger than the 25 MB limit." },
+      ]);
+      return;
+    }
+
+    const prior: Message[] = [
+      ...messages,
+      { role: "user", content: `📄 ${asset.name}` },
+    ];
+    setMessages(prior);
+    setAttaching(true);
+
+    try {
+      const form = new FormData();
+      form.append("file", {
+        uri: asset.uri,
+        name: asset.name,
+        type: asset.mimeType || "application/octet-stream",
+      } as any);
+      form.append("kind", "patient");
+      if (conversationId) {
+        form.append("conversation_id", String(conversationId));
+      }
+
+      const { data } = await aiAPI.uploadAndAnalyze(form);
+      if (data.conversation_id) {
+        setConversationId(data.conversation_id);
+      }
+
+      setMessages([
+        ...prior,
+        {
+          role: "assistant",
+          content:
+            data.reply ||
+            data.document_summary ||
+            "I could not find any report text in that file.",
+          urgency: data.urgency_level,
+          recommended_next_step: data.recommended_next_step,
+          warning_signs: data.warning_signs,
+        },
+      ]);
+    } catch (err: any) {
+      setMessages([
+        ...prior,
+        {
+          role: "assistant",
+          content: err?.response
+            ? `I could not analyse that file: ${
+                err.response.data?.error || "the server rejected it."
+              }`
+            : NETWORK_ERROR,
+        },
+      ]);
+    } finally {
+      setAttaching(false);
+    }
+  };
+
   const startOver = () => {
     setMessages([GREETING]);
     setConversationId(null);
@@ -137,7 +223,7 @@ export const SymptomAssessmentScreen = () => {
           <Text style={styles.headerTitle}>🩺 Symptom Assessment</Text>
           <Text style={styles.headerSub}>AI Triage & Decision Support</Text>
         </View>
-        <TouchableOpacity onPress={startOver} disabled={loading}>
+        <TouchableOpacity onPress={startOver} disabled={loading || attaching}>
           <Text style={styles.newChat}>New</Text>
         </TouchableOpacity>
       </View>
@@ -160,14 +246,16 @@ export const SymptomAssessmentScreen = () => {
                 msg.role === "user" ? styles.userBubble : styles.assistantBubble,
               ]}
             >
-              <Text
-                style={[
-                  styles.bubbleText,
-                  msg.role === "user" ? styles.userText : styles.assistantText,
-                ]}
-              >
-                {msg.content}
-              </Text>
+              {msg.role === "assistant" ? (
+                <AssistantReply
+                  content={msg.content}
+                  bodyColor="#1e293b"
+                  labelColor="#134e4a"
+                  citationColor="#0f766e"
+                />
+              ) : (
+                <Text style={[styles.bubbleText, styles.userText]}>{msg.content}</Text>
+              )}
 
               {msg.urgency && (
                 <View
@@ -213,15 +301,24 @@ export const SymptomAssessmentScreen = () => {
             </View>
           ))}
 
-          {loading && (
+          {(loading || attaching) && (
             <View style={styles.loadingBubble}>
               <ActivityIndicator size="small" color="#0d9488" />
-              <Text style={styles.loadingText}>Evaluating symptoms & evidence...</Text>
+              <Text style={styles.loadingText}>
+                {attaching ? "Reading your report..." : "Evaluating symptoms & evidence..."}
+              </Text>
             </View>
           )}
         </ScrollView>
 
         <View style={styles.inputContainer}>
+          <TouchableOpacity
+            style={[styles.attachButton, (loading || attaching) && styles.attachButtonDisabled]}
+            onPress={attachReport}
+            disabled={loading || attaching}
+          >
+            <Text style={styles.attachText}>📎</Text>
+          </TouchableOpacity>
           <TextInput
             style={styles.input}
             placeholder="Describe symptoms (e.g. fever, headache)..."
@@ -233,11 +330,15 @@ export const SymptomAssessmentScreen = () => {
             multiline
           />
           <TouchableOpacity
-            style={[styles.sendButton, loading && styles.sendButtonDisabled]}
+            style={[styles.sendButton, (loading || attaching) && styles.sendButtonBusy]}
             onPress={() => send(input)}
-            disabled={loading}
+            disabled={loading || attaching}
           >
-            <Text style={styles.sendText}>Send</Text>
+            {loading || attaching ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <Text style={styles.sendText}>Send</Text>
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -283,7 +384,19 @@ const styles = StyleSheet.create({
   loadingText: { fontSize: 13, color: "#64748b" },
   inputContainer: { flexDirection: "row", padding: 12, backgroundColor: "#ffffff", borderTopWidth: 1, borderTopColor: "#e2e8f0", alignItems: "flex-end", gap: 8 },
   input: { flex: 1, backgroundColor: "#f1f5f9", borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8, fontSize: 15, maxHeight: 100, color: "#0f172a" },
-  sendButton: { backgroundColor: "#0d9488", paddingHorizontal: 18, paddingVertical: 10, borderRadius: 20 },
-  sendButtonDisabled: { opacity: 0.5 },
+  sendButton: { backgroundColor: "#0d9488", paddingHorizontal: 18, paddingVertical: 10, borderRadius: 20, minWidth: 62, alignItems: "center" },
+  sendButtonBusy: { opacity: 0.9 },
   sendText: { color: "#ffffff", fontWeight: "bold", fontSize: 14 },
+  attachButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  attachButtonDisabled: { opacity: 0.5 },
+  attachText: { fontSize: 18 },
 });

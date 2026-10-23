@@ -6,13 +6,14 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from accounts.permissions import IsAdminUser, IsAdminUserOrReadOnly
-from .models import MedicalKnowledgeSource
+from .models import KnowledgeDocument, MedicalKnowledgeSource
 from .serializers import (
+    KnowledgeDocumentSerializer,
     MedicalKnowledgeSourceSerializer,
     KnowledgeSearchRequestSerializer,
     KnowledgeSearchResponseSerializer
 )
-from .services import KnowledgeService, RetrievalService
+from .services import KnowledgeService, RetrievalService, ensure_seed_data
 
 
 class MedicalKnowledgeSourceViewSet(viewsets.ModelViewSet):
@@ -32,15 +33,8 @@ def list_sources(request):
     try:
         sources = MedicalKnowledgeSource.objects.all()
         if not sources.exists():
-            # Seed default sources into DB if empty
-            default_sources = [
-                {"name": "World Health Organization", "url": "https://www.who.int", "source_type": "WHO", "approval_status": "approved", "notes": "Global health authority guidelines"},
-                {"name": "Rwanda Ministry of Health", "url": "https://moh.gov.rw", "source_type": "MOH", "approval_status": "approved", "notes": "Official health authority for Rwanda"},
-                {"name": "Rwanda Food and Drugs Authority", "url": "https://rfd.gov.rw", "source_type": "FDA", "approval_status": "approved", "notes": "Regulatory authority for medicines"},
-                {"name": "Approved Medical Literature", "url": "https://cdc.gov", "source_type": "LITERATURE", "approval_status": "approved", "notes": "Peer-reviewed medical literature"}
-            ]
-            for s in default_sources:
-                MedicalKnowledgeSource.objects.get_or_create(name=s["name"], defaults=s)
+            # Seed the approved starter corpus into the DB if empty
+            ensure_seed_data()
             sources = MedicalKnowledgeSource.objects.all()
 
         if request.user.role != "ADMIN":
@@ -108,13 +102,83 @@ def delete_source(request, pk):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated, IsAdminUser])
 def sync_knowledge_base(request):
-    """Manually trigger RAG / Vector Search index synchronization."""
-    approved_count = MedicalKnowledgeSource.objects.filter(approval_status="approved").count()
+    """Report what retrieval can currently search.
+
+    Retrieval reads the approved corpus straight from the database, so there is
+    no separate index to rebuild; this endpoint tells the admin how much material
+    is live and re-seeds the corpus if the tables are still empty.
+    """
+    if not MedicalKnowledgeSource.objects.exists():
+        ensure_seed_data()
+
+    sources = MedicalKnowledgeSource.objects.values_list("approval_status", flat=True)
+    approved_count = sum(1 for status in sources if status == "approved")
+    document_count = KnowledgeDocument.objects.filter(
+        is_active=True, source__approval_status="approved"
+    ).count()
     return Response({
-        "message": _("Knowledge base index synchronized successfully."),
+        "message": _(
+            "Retrieval is live: %(documents)d approved documents across %(sources)d approved sources."
+        ) % {"documents": document_count, "sources": approved_count},
         "approved_sources_synced": approved_count,
+        "approved_documents_synced": document_count,
         "timestamp": timezone.now().isoformat()
     }, status=status.HTTP_200_OK)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def list_documents(request):
+    """List the guidance documents retrieval can search, with their source."""
+    source_id = request.query_params.get("source")
+    documents = KnowledgeDocument.objects.select_related("source")
+    if source_id:
+        documents = documents.filter(source_id=source_id)
+    return Response({
+        "documents": KnowledgeDocumentSerializer(documents, many=True).data,
+        "total": documents.count(),
+    })
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsAdminUser])
+def add_document(request):
+    """Add guidance text from an approved source (admin only)."""
+    serializer = KnowledgeDocumentSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    document = serializer.save()
+    return Response({
+        "message": _("Document added to the knowledge base"),
+        "document": KnowledgeDocumentSerializer(document).data,
+    }, status=status.HTTP_201_CREATED)
+
+
+@api_view(["PUT", "PATCH"])
+@permission_classes([IsAuthenticated, IsAdminUser])
+def update_document(request, pk):
+    """Correct or retire a knowledge document (admin only)."""
+    try:
+        document = KnowledgeDocument.objects.get(pk=pk)
+    except KnowledgeDocument.DoesNotExist:
+        return Response({"error": _("Document not found")}, status=status.HTTP_404_NOT_FOUND)
+
+    serializer = KnowledgeDocumentSerializer(document, data=request.data, partial=True)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(KnowledgeDocumentSerializer(serializer.save()).data)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated, IsAdminUser])
+def delete_document(request, pk):
+    """Delete a knowledge document (admin only)."""
+    deleted, _count = KnowledgeDocument.objects.filter(pk=pk).delete()
+    if not deleted:
+        return Response({"error": _("Document not found")}, status=status.HTTP_404_NOT_FOUND)
+    return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 @api_view(["POST"])

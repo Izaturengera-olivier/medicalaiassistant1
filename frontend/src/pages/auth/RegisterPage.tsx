@@ -3,7 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../context/AuthContext";
 import { errorMessage } from "../../hooks/useAsync";
-import { Field } from "../../components/ui";
+import { Field, PasswordInput } from "../../components/ui";
 import { MobileDownloadButton } from "../../components/common/MobileAppDownloadModal";
 
 export function RegisterPage() {
@@ -77,10 +77,10 @@ export function RegisterPage() {
               </select>
             </Field>
             <Field label={t("auth.password")} htmlFor="password">
-              <input id="password" name="password" type="password" required className="input" placeholder={t("auth.passwordPlaceholder")} value={formData.password} onChange={handleChange} />
+              <PasswordInput id="password" name="password" autoComplete="new-password" placeholder={t("auth.passwordPlaceholder")} value={formData.password} onChange={handleChange} />
             </Field>
             <Field label={t("auth.confirmPassword")} htmlFor="password_confirm">
-              <input id="password_confirm" name="password_confirm" type="password" required className="input" placeholder={t("auth.passwordPlaceholder")} value={formData.password_confirm} onChange={handleChange} />
+              <PasswordInput id="password_confirm" name="password_confirm" autoComplete="new-password" placeholder={t("auth.passwordPlaceholder")} value={formData.password_confirm} onChange={handleChange} />
             </Field>
           </div>
           <div className="form-actions" style={{ marginTop: 16 }}>

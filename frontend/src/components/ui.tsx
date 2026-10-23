@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useState } from "react";
+import type { ChangeEvent, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
 
@@ -155,6 +156,73 @@ export function Field({
       <label htmlFor={htmlFor}>{label}</label>
       {children}
       {hint && <span className="hint">{hint}</span>}
+    </div>
+  );
+}
+
+/**
+ * Password input with a show/hide toggle. Users type these on shared clinic
+ * computers, so the mask has to be reversible without leaving the form.
+ */
+export function PasswordInput({
+  id,
+  name,
+  value,
+  onChange,
+  placeholder,
+  required = true,
+  minLength,
+  autoComplete = "new-password",
+}: {
+  id: string;
+  name?: string;
+  value: string;
+  onChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  placeholder?: string;
+  required?: boolean;
+  minLength?: number;
+  autoComplete?: string;
+}) {
+  const { t } = useTranslation();
+  const [visible, setVisible] = useState(false);
+  const toggleLabel = visible ? t("auth.hidePassword") : t("auth.showPassword");
+
+  return (
+    <div className="password-field">
+      <input
+        id={id}
+        name={name}
+        type={visible ? "text" : "password"}
+        className="input"
+        required={required}
+        minLength={minLength}
+        placeholder={placeholder}
+        value={value}
+        onChange={onChange}
+        autoComplete={autoComplete}
+      />
+      <button
+        type="button"
+        className="password-toggle"
+        onClick={() => setVisible((v) => !v)}
+        aria-pressed={visible}
+        aria-label={toggleLabel}
+        title={toggleLabel}
+      >
+        {visible ? (
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-10-8-10-8a18.45 18.45 0 0 1 5.06-5.94" />
+            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a18.54 18.54 0 0 1-2.16 3.19" />
+            <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+            <line x1="1" y1="1" x2="23" y2="23" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        )}
+      </button>
     </div>
   );
 }

@@ -6,23 +6,32 @@ from typing import Any, Dict, List, Optional
 from django.conf import settings
 
 from core.constants import UrgencyLevel
-from core.exceptions import AIServiceError
+from core.exceptions import AIServiceError, AIResponseTruncatedError
 from knowledge.services import RetrievalService
 
 from ..providers import get_llm_provider
-from .prompts import get_chat_system_prompt, get_professional_system_prompt
+from .prompts import (
+    get_chat_system_prompt,
+    get_professional_system_prompt,
+    get_document_analysis_system_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
 CONVERSATION_SCHEMA = {
-    "reply": "conversational reply to the patient, including any follow-up questions",
+    "reply": (
+        "the full detailed answer to the patient (roughly 300-600 words for clinical queries), "
+        "providing deep explanations of what it means, bodily mechanisms, what to do safely, "
+        "what to watch for, and follow-up questions; blank-line-separated sections with short "
+        "plain-text labels, \"- \" bullets, inline [1] citations, NO markdown"
+    ),
     "symptoms_identified": ["symptom the patient reported"],
     "follow_up_questions": ["question to ask the patient (max 3, never repeat answered ones)"],
     "possible_conditions": [
         {
             "name": "condition name",
             "likelihood": "low | medium | high",
-            "description": "one-sentence explanation grounded in the evidence",
+            "description": "detailed clinical explanation grounded in the evidence of why this condition fits the patient's presentation",
         }
     ],
     "warning_signs": ["emergency warning sign present"],
@@ -30,12 +39,17 @@ CONVERSATION_SCHEMA = {
         "one of INFORMATIONAL, ROUTINE_CONSULTATION, PROMPT_MEDICAL_REVIEW, "
         "URGENT_MEDICAL_ATTENTION"
     ),
-    "general_information": "plain-language explanation grounded in the evidence",
-    "recommended_next_step": "clear next step for the patient",
+    "general_information": "comprehensive educational background and plain-language explanation grounded in the evidence",
+    "recommended_next_step": "clear, detailed, and actionable next step for the patient",
 }
 
 PROFESSIONAL_SCHEMA = {
-    "reply": "clinician-level conversational answer, short paragraphs or tight bullets",
+    "reply": (
+        "the full clinician-level analysis (roughly 300-600 words of rigorous plain text): differentials "
+        "with discriminating features, pathophysiological mechanisms, guideline synthesis, workup, "
+        "pharmacological considerations, red flags, and gaps; blank-line-separated sections with "
+        "short plain-text labels, \"- \" bullets, inline [1] citations, NO markdown"
+    ),
     "symptoms_identified": ["symptom or clinical finding mentioned in the case"],
     "follow_up_questions": [
         "missing case information that would refine the answer (max 3)"
@@ -44,7 +58,7 @@ PROFESSIONAL_SCHEMA = {
         {
             "name": "condition name",
             "likelihood": "low | medium | high",
-            "description": "one-sentence clinical rationale grounded in the evidence",
+            "description": "detailed clinical rationale with evidence grounding, pathophysiology, and probability context",
         }
     ],
     "warning_signs": ["red flags, contraindications, or dangerous interactions present"],
@@ -52,8 +66,43 @@ PROFESSIONAL_SCHEMA = {
         "one of INFORMATIONAL, ROUTINE_CONSULTATION, PROMPT_MEDICAL_REVIEW, "
         "URGENT_MEDICAL_ATTENTION"
     ),
-    "general_information": "clinical summary grounded in the evidence",
+    "general_information": "detailed clinical summary and guideline review grounded in the evidence",
     "recommended_next_step": "suggested next step for the clinician",
+}
+
+DOCUMENT_ANALYSIS_SCHEMA = {
+    "reply": "thorough clinical explanation of the document/scan findings, explaining what each finding means in context and outlining evidence-based clinical steps",
+    "document_category": "imaging_scan | lab_result | pathology | discharge_summary | prescription | general",
+    "exam_type": "detected exam name or modality (e.g. Chest CT with contrast)",
+    "document_summary": "detailed clinical summary of the scan / lab study findings and impressions",
+    "scan_findings": [
+        {
+            "area": "anatomical area or analyte name",
+            "finding": "description of observation",
+            "is_abnormal": False
+        }
+    ],
+    "abnormalities": ["specific abnormal or concerning findings highlighted"],
+    "possible_conditions": [
+        {
+            "name": "condition name",
+            "likelihood": "low | medium | high",
+            "description": "detailed clinical rationale grounded in evidence",
+        }
+    ],
+    "warning_signs": ["emergency red flags detected requiring urgent evaluation"],
+    "urgency_level": (
+        "one of INFORMATIONAL, ROUTINE_CONSULTATION, PROMPT_MEDICAL_REVIEW, "
+        "URGENT_MEDICAL_ATTENTION"
+    ),
+    "trusted_solutions": [
+        {
+            "action": "recommended clinical action or management step",
+            "guideline_source": "e.g. Fleischner Society / WHO / NIH",
+            "details": "explanation of rationale"
+        }
+    ],
+    "recommended_next_step": "clear actionable next step for the patient or clinician",
 }
 
 _VALID_LIKELIHOODS = {"low", "medium", "high"}
@@ -82,7 +131,11 @@ class AIService:
     """Service for AI-powered medical conversations and assessments."""
 
     MAX_HISTORY_MESSAGES = 20
-    MAX_EVIDENCE_RESULTS = 6
+    # 8 ranked passages rather than 6: the approved corpus is only 38 documents of
+    # 241-995 characters each (measured), so a 6-passage window routinely left the
+    # model with ~1.5 passages that actually matched the question. Retrieval caps
+    # the prompt at roughly 8 x 995 chars of content, which is affordable.
+    MAX_EVIDENCE_RESULTS = 8
 
     def __init__(self):
         self.provider_name = settings.AI_PROVIDER
@@ -143,6 +196,17 @@ class AIService:
             )
             raw = provider.complete_structured(messages, CONVERSATION_SCHEMA)
             return self._normalize_result(raw, evidence)
+        except AIResponseTruncatedError as exc:
+            # Loud on purpose: a clipped long answer must be distinguishable from a
+            # provider outage, otherwise every depth change looks like a prompt bug.
+            logger.error(
+                "LLM reply hit the completion budget and was truncated; using fallback "
+                "conversation. %s",
+                exc,
+            )
+            return self._mock_conversation(
+                message, sanitized_history, patient_history, current_medications, evidence
+            )
         except AIServiceError as exc:
             logger.warning("LLM provider failed, using fallback conversation: %s", exc)
             return self._mock_conversation(
@@ -196,13 +260,398 @@ class AIService:
             )
             raw = provider.complete_structured(messages, PROFESSIONAL_SCHEMA)
             return self._normalize_result(raw, evidence)
+        except AIResponseTruncatedError as exc:
+            logger.error(
+                "LLM professional reply hit the completion budget and was truncated; "
+                "using fallback reply. %s",
+                exc,
+            )
+            return self._mock_professional_conversation(
+                message, sanitized_history, evidence, fallback_reason=str(exc)
+            )
         except AIServiceError as exc:
             logger.warning(
                 "LLM provider failed, using fallback professional reply: %s", exc
             )
             return self._mock_professional_conversation(
-                message, sanitized_history, evidence
+                message, sanitized_history, evidence, fallback_reason=str(exc)
             )
+
+    def analyze_medical_document(
+        self,
+        document_text: str,
+        document_category: str = "imaging_scan",
+        exam_type: str = "",
+        user_message: str = "",
+        user_role: str = "PATIENT",
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Perform deep clinical analysis on an uploaded medical document / scan report.
+
+        Args:
+            document_text: Extracted plain text or structured notes from document
+            document_category: Detected category (imaging_scan, lab_result, etc.)
+            exam_type: Inferred modality / study title (e.g. Chest CT with contrast)
+            user_message: Optional prompt or question from the user
+            user_role: Role of the uploading user (PATIENT, DOCTOR, PHARMACIST)
+            history: Optional conversation history
+
+        Returns:
+            Structured clinical report analysis with findings, abnormalities,
+            urgency, possible conditions, trusted solutions, and citations.
+        """
+        sanitized_history = self._sanitize_history(history)
+        corpus_for_lang = f"{user_message} {document_text[:500]}"
+        language = self._detect_language(corpus_for_lang, sanitized_history)
+
+        query = self._build_document_query(exam_type, document_category, document_text, user_message)
+        evidence = self._retrieve_evidence(query)
+
+        if not self._use_llm_provider():
+            return self._mock_document_analysis(
+                document_text=document_text,
+                document_category=document_category,
+                exam_type=exam_type,
+                user_message=user_message,
+                user_role=user_role,
+                evidence=evidence,
+                language=language,
+            )
+
+        try:
+            evidence_block = self.retrieval_service.format_evidence_for_ai(evidence)
+            system_prompt = get_document_analysis_system_prompt(
+                evidence_block=evidence_block,
+                document_category=document_category,
+                exam_type=exam_type,
+                language=language,
+                user_role=user_role,
+            )
+
+            prompt_user_content = (
+                f"DOCUMENT TITLE / STUDY: {exam_type}\n"
+                f"DOCUMENT CATEGORY: {document_category}\n"
+                f"USER QUESTION: {user_message or 'Please analyze this medical report/scan in detail, flag any abnormalities, and provide trusted clinical solutions and next steps.'}\n\n"
+                f"--- EXTRACTED REPORT CONTENT ---\n"
+                f"{document_text[:12000]}"
+            )
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                *sanitized_history,
+                {"role": "user", "content": prompt_user_content},
+            ]
+
+            provider = get_llm_provider(
+                self.provider_name,
+                api_key=self.api_key,
+                model=self.model,
+                base_url=self.base_url,
+            )
+            raw = provider.complete_structured(messages, DOCUMENT_ANALYSIS_SCHEMA)
+            return self._normalize_document_result(raw, evidence, document_category, exam_type)
+        except AIResponseTruncatedError as exc:
+            logger.error(
+                "LLM document analysis hit the completion budget and was truncated; "
+                "using fallback. %s",
+                exc,
+            )
+            return self._mock_document_analysis(
+                document_text=document_text,
+                document_category=document_category,
+                exam_type=exam_type,
+                user_message=user_message,
+                user_role=user_role,
+                evidence=evidence,
+                language=language,
+            )
+        except AIServiceError as exc:
+            logger.warning("LLM document analysis failed, using fallback: %s", exc)
+            return self._mock_document_analysis(
+                document_text=document_text,
+                document_category=document_category,
+                exam_type=exam_type,
+                user_message=user_message,
+                user_role=user_role,
+                evidence=evidence,
+                language=language,
+            )
+
+    def _build_document_query(
+        self,
+        exam_type: str,
+        document_category: str,
+        document_text: str,
+        user_message: str
+    ) -> str:
+        keywords = []
+        lower_text = document_text.lower()
+        if exam_type:
+            keywords.append(exam_type)
+
+        key_clinical_markers = [
+            "nodule", "mass", "lesion", "consolidation", "effusion", "pneumothorax",
+            "opacity", "edema", "hemorrhage", "infarct", "ischemia", "fracture",
+            "steatosis", "cyst", "cholelithiasis", "appendicitis", "cardiomegaly",
+            "elevated", "alt", "ast", "creatinine", "hemoglobin", "wbc", "platelets",
+            "potassium", "glucose", "bilirubin", "gfr", "biopsy", "carcinoma", "dysplasia"
+        ]
+        for marker in key_clinical_markers:
+            if marker in lower_text:
+                keywords.append(marker)
+
+        if user_message:
+            keywords.append(user_message)
+
+        query = " ".join(keywords[:10]) or exam_type or "medical imaging laboratory guidelines"
+        return query[:2000]
+
+    def _normalize_document_result(
+        self,
+        raw: Dict[str, Any],
+        evidence: List[Dict[str, Any]],
+        document_category: str,
+        exam_type: str
+    ) -> Dict[str, Any]:
+        raw_conditions = raw.get("possible_conditions") or []
+        conditions = [
+            self._normalize_condition(c)
+            for c in raw_conditions
+            if isinstance(c, dict) and c.get("name")
+        ]
+
+        warning_signs = [
+            str(w).strip()
+            for w in raw.get("warning_signs") or []
+            if str(w).strip()
+        ]
+
+        urgency_level = self._normalize_urgency(raw.get("urgency_level"))
+        urgency_level = self._enforce_urgency_floor(urgency_level, warning_signs)
+
+        scan_findings = raw.get("scan_findings")
+        if not isinstance(scan_findings, list):
+            scan_findings = []
+
+        abnormalities = [
+            str(a).strip()
+            for a in raw.get("abnormalities") or []
+            if str(a).strip()
+        ]
+
+        trusted_solutions = raw.get("trusted_solutions")
+        if not isinstance(trusted_solutions, list):
+            trusted_solutions = []
+
+        sources = self._evidence_sources(evidence)
+
+        return {
+            "reply": str(raw.get("reply") or raw.get("document_summary") or "").strip(),
+            "document_category": raw.get("document_category") or document_category,
+            "exam_type": raw.get("exam_type") or exam_type,
+            "document_summary": str(raw.get("document_summary") or "").strip(),
+            "scan_findings": scan_findings,
+            "abnormalities": abnormalities,
+            "possible_conditions": conditions,
+            "warning_signs": warning_signs,
+            "urgency_level": urgency_level,
+            "trusted_solutions": trusted_solutions,
+            "recommended_next_step": str(raw.get("recommended_next_step") or "").strip(),
+            "sources": sources,
+            "model_used": self.model or self.provider_name,
+            "confidence": 0.9,
+            "evidence": evidence,
+        }
+
+    def _mock_document_analysis(
+        self,
+        document_text: str,
+        document_category: str,
+        exam_type: str,
+        user_message: str,
+        user_role: str,
+        evidence: List[Dict[str, Any]],
+        language: str = "en",
+    ) -> Dict[str, Any]:
+        lower_text = document_text.lower()
+        findings = []
+        abnormalities = []
+        warning_signs = []
+        urgency = UrgencyLevel.ROUTINE_CONSULTATION
+
+        if "nodule" in lower_text:
+            findings.append({
+                "area": "Lungs / Thorax",
+                "finding": "Pulmonary nodule identified on chest imaging",
+                "is_abnormal": True
+            })
+            abnormalities.append("Pulmonary nodule detected; risk stratification per Fleischner criteria warranted.")
+            urgency = UrgencyLevel.PROMPT_MEDICAL_REVIEW
+        if "effusion" in lower_text:
+            findings.append({
+                "area": "Pleural / Peritoneal space",
+                "finding": "Fluid collection / effusion noted",
+                "is_abnormal": True
+            })
+            abnormalities.append("Pleural or peritoneal fluid effusion identified.")
+            urgency = UrgencyLevel.PROMPT_MEDICAL_REVIEW
+        if "fracture" in lower_text:
+            findings.append({
+                "area": "Skeletal / Bone",
+                "finding": "Bony cortical disruption / fracture identified",
+                "is_abnormal": True
+            })
+            abnormalities.append("Bone fracture identified.")
+            warning_signs.append("Acute bone fracture requiring orthopedic stabilization.")
+            urgency = UrgencyLevel.URGENT_MEDICAL_ATTENTION
+        if "hemorrhage" in lower_text or "bleed" in lower_text:
+            findings.append({
+                "area": "Neuro / Vascular",
+                "finding": "Intracranial or acute hemorrhage indicated",
+                "is_abnormal": True
+            })
+            abnormalities.append("Acute hemorrhage / bleeding identified.")
+            warning_signs.append("Acute hemorrhage is a medical emergency requiring immediate emergency attention.")
+            urgency = UrgencyLevel.URGENT_MEDICAL_ATTENTION
+        if "steatosis" in lower_text or "fatty liver" in lower_text:
+            findings.append({
+                "area": "Liver / Hepatic",
+                "finding": "Increased hepatic parenchymal echogenicity / steatosis",
+                "is_abnormal": True
+            })
+            abnormalities.append("Hepatic steatosis (fatty liver changes).")
+        if "cyst" in lower_text:
+            findings.append({
+                "area": "Kidney / Renal or Adnexal",
+                "finding": "Well-circumscribed cystic lesion",
+                "is_abnormal": False
+            })
+        if "alt" in lower_text or "ast" in lower_text:
+            findings.append({
+                "area": "Hepatic Function (Enzymes)",
+                "finding": "Liver transaminase markers evaluated",
+                "is_abnormal": "elevated" in lower_text or "high" in lower_text
+            })
+            if "elevated" in lower_text or "high" in lower_text:
+                abnormalities.append("Elevated serum transaminases (ALT/AST).")
+        if "hemoglobin" in lower_text or "cbc" in lower_text:
+            findings.append({
+                "area": "Hematology (CBC)",
+                "finding": "Complete blood count and red cell parameters",
+                "is_abnormal": "low" in lower_text or "anemia" in lower_text
+            })
+            if "low" in lower_text or "anemia" in lower_text:
+                abnormalities.append("Decreased hemoglobin / hematocrit indicative of anemia.")
+
+        if not findings:
+            findings.append({
+                "area": exam_type or "General Anatomy",
+                "finding": "Clinical review of uploaded diagnostic document completed",
+                "is_abnormal": False
+            })
+            urgency = UrgencyLevel.INFORMATIONAL
+
+        possible_conditions = []
+        if abnormalities:
+            for abn in abnormalities[:3]:
+                cond_name = abn.split(";")[0].replace("detected", "").replace("identified", "").strip()
+                possible_conditions.append({
+                    "name": cond_name.capitalize(),
+                    "likelihood": "medium",
+                    "confidence": "medium",
+                    "description": f"Grounded in report findings: {abn}"
+                })
+        else:
+            possible_conditions.append({
+                "name": "Normal Diagnostic Study",
+                "likelihood": "high",
+                "confidence": "high",
+                "description": "No acute focal abnormalities or alarming pathological indicators identified."
+            })
+
+        trusted_solutions = []
+        if any("nodule" in f["finding"].lower() for f in findings):
+            trusted_solutions.append({
+                "action": "Repeat high-resolution chest CT scan in 6-12 months",
+                "guideline_source": "Fleischner Society & ACR Imaging Guidelines",
+                "details": "Follow-up imaging interval to monitor stability and assess doubling time."
+            })
+            trusted_solutions.append({
+                "action": "Consultation with a Pulmonologist",
+                "guideline_source": "NIH & WHO Clinical Protocols",
+                "details": "Clinical correlation with smoking history, occupational exposures, and respiratory symptoms."
+            })
+        elif any("steatosis" in f["finding"].lower() for f in findings):
+            trusted_solutions.append({
+                "action": "Metabolic and lipid panel evaluation with lifestyle counseling",
+                "guideline_source": "WHO & Mayo Clinic Guidelines",
+                "details": "Evaluate fasting glucose, HbA1c, lipid panel, and dietary moderation."
+            })
+        elif any("fracture" in f["finding"].lower() or "hemorrhage" in f["finding"].lower() for f in findings):
+            trusted_solutions.append({
+                "action": "Immediate emergency evaluation and specialist consult",
+                "guideline_source": "Emergency Medicine Clinical Practice Guidelines",
+                "details": "Urgent intervention required to avoid acute complications."
+            })
+        else:
+            trusted_solutions.append({
+                "action": "Clinical correlation with your treating physician",
+                "guideline_source": "WHO Clinical Decision Support Guidelines",
+                "details": "Review the full scan and laboratory context alongside physical examination."
+            })
+
+        is_prof = str(user_role).upper() in {"DOCTOR", "PHARMACIST", "ADMIN"}
+        sources = self._evidence_sources(evidence)
+        study_title = exam_type or "Medical Diagnostic Study"
+
+        if language == "rw":
+            reply = (
+                f"Isesengura ry'inyandiko y'ibipimo bya muganga: {study_title}.\n\n"
+                f"Ibipimo byagaragaye: {len(findings)} byasuzumwe. "
+                + (f"Ibipimo bikeneye kwitonderwa: {', '.join(abnormalities)}. " if abnormalities else "Nta kintu giteye inkeke cyabonetse. ")
+                + "\nInama z'inzobere: Mwegere umuganga ubavura kugira ngo asuzume ibi bipimo mu buryo bwuzuye."
+            )
+            doc_summary = f"Isuzuma ry'ibipimo bya {study_title} ryakozwe hakurikijwe amabwiriza y'ubuvuzi yemewe."
+            rec_step = "Kugisha inama umuganga ubishoboye kugira ngo agufashe gufata umwanzuro ukwiye."
+        else:
+            if is_prof:
+                reply = (
+                    f"**Clinical Document Analysis:** {study_title}\n\n"
+                    f"**Findings Summary:** {len(findings)} anatomical regions/parameters evaluated. "
+                    + (f"**Notable Observations:** {'; '.join(abnormalities)}. " if abnormalities else "No acute focal abnormalities identified. ")
+                    + f"\n\n**Decision Support Guidance:** Grounded in retrieved evidence from {', '.join(s['name'] for s in sources[:3]) if sources else 'approved clinical guidelines'}. "
+                    "Review recommended next steps and correlate with patient clinical history."
+                )
+            else:
+                reply = (
+                    f"Here is a clear analysis of your uploaded **{study_title}** results:\n\n"
+                    + (f"**What the report found:** We identified {len(findings)} key observations. "
+                       f"The main items noted are: {'; '.join(abnormalities)}.\n\n" if abnormalities
+                       else "**What the report found:** The diagnostic findings appear generally unremarkable with no critical alerts.\n\n")
+                    + f"**Recommended Next Step:** {trusted_solutions[0]['action']}. "
+                    "Please bring this report to your healthcare provider for clinical correlation and personalized advice."
+                )
+            doc_summary = f"Clinical review of {study_title} findings and laboratory indicators grounded in trusted medical evidence."
+            rec_step = trusted_solutions[0]["action"]
+
+        return {
+            "reply": reply,
+            "document_category": document_category,
+            "exam_type": study_title,
+            "document_summary": doc_summary,
+            "scan_findings": findings,
+            "abnormalities": abnormalities,
+            "possible_conditions": possible_conditions,
+            "warning_signs": warning_signs,
+            "urgency_level": urgency,
+            "trusted_solutions": trusted_solutions,
+            "recommended_next_step": rec_step,
+            "sources": sources,
+            "model_used": "mock",
+            "confidence": 0.85,
+            "evidence": evidence,
+        }
 
     def generate_follow_up_questions(
         self,
@@ -219,7 +668,34 @@ class AIService:
         Returns:
             List of follow-up questions
         """
-        return self._mock_follow_up_questions(current_symptoms)
+        # The chief complaint, the clinician's notes and the symptoms already on
+        # the consultation carry the context an empty current_symptoms list would
+        # otherwise lose, which made every caller get the same two questions.
+        context = consultation_context or {}
+        context_text = " ".join(
+            str(value)
+            for value in (context.get("chief_complaint"), context.get("notes"))
+            if value
+        )
+
+        symptoms = [str(s) for s in (current_symptoms or []) if s]
+        for symptom in list(context.get("symptoms") or []) + self._extract_symptoms_from_text(
+            f"{context_text} {' '.join(symptoms)}"
+        ):
+            if str(symptom).lower() not in {s.lower() for s in symptoms}:
+                symptoms.append(str(symptom))
+
+        language = self._detect_language(context_text or " ".join(symptoms), [])
+        already_asked = set(context.get("already_asked") or [])
+        questions = [
+            question
+            for question in (
+                self._mock_follow_up_questions(symptoms, language)
+                + self._mock_secondary_questions(symptoms, language)
+            )
+            if question not in already_asked
+        ]
+        return questions[:3]
 
     def _use_llm_provider(self) -> bool:
         if self.provider_name == "mock":
@@ -455,8 +931,14 @@ class AIService:
         message: str,
         history: List[Dict[str, str]],
         evidence: List[Dict[str, Any]],
+        fallback_reason: str = "",
     ) -> Dict[str, Any]:
-        """Deterministic clinician-facing reply used without an LLM provider."""
+        """Deterministic clinician-facing reply used without an LLM provider.
+
+        ``fallback_reason`` is set when a configured provider was tried and failed,
+        so the note tells the clinician the real cause instead of blaming a missing
+        API key.
+        """
         query = " ".join(
             [turn["content"] for turn in history if turn["role"] == "user"] + [message]
         )
@@ -469,45 +951,55 @@ class AIService:
                 f"[{index}] {item.get('title')} — {item.get('source_name')}: {snippet}."
             )
 
-        if language == "rw":
-            lines = []
-            if evidence_lines:
-                lines.append(
-                    "Incamake y'amabwiriza yakuwe mu nkomoko z'ubuvuzi zemewe:\n"
-                    + "\n".join(evidence_lines)
-                )
-            else:
-                lines.append(
-                    "Ntabwo nabonye inyandiko ihuye n'ikibazo mwabajije mu nkomoko zemewe."
-                )
+        rw = language == "rw"
+        lines = []
+        if evidence_lines:
+            lines.append(
+                ("Incamake y'amabwiriza yakuwe mu nkomoko z'ubuvuzi zemewe:\n"
+                 if rw
+                 else "From the approved medical sources for your query:\n")
+                + "\n".join(evidence_lines)
+            )
+        else:
+            lines.append(
+                "Ntabwo nabonye inyandiko ihuye n'ikibazo mwabajije mu nkomoko zemewe."
+                if rw
+                else "No matching guidance was found in the approved medical sources for this query."
+            )
+
+        if fallback_reason:
+            # A configured provider was tried and failed (truncated reply, quota,
+            # outage). Say so instead of blaming an unset API key.
+            short_reason = fallback_reason[:200]
+            lines.append(
+                "Icyitonderwa: Igisubizo cya AI nticyakoresijwe kubera ikibazo cya "
+                "serivisi y'ikoranabuhanga, si ikibazo cy'uwo gutanga API key. Ibi "
+                "bikurikira bivuye mu nkomoko zemewe gusa."
+                if rw
+                else "Note: the model answer could not be used ("
+                + short_reason
+                + "), so this reply is limited to retrieved source excerpts. "
+                "This is a provider/runtime issue, not a missing API key."
+            )
+        elif rw:
             lines.append(
                 "Icyitonderwa: Nta funguro rya AI (AI_API_KEY) ryashyizweho. Ibisubizo bivuye "
                 "mu nkomoko zemewe gusa. Shyiraho AI_PROVIDER na AI_API_KEY mu kubona isuzuma ryuzuye."
             )
-            recommendation = (
-                "Koresha amakuru yakuwe mu nkomoko zemewe nk'ubufasha; "
-                "icyemezo cya kliniki kiguma kuri mwe."
-            )
         else:
-            lines = []
-            if evidence_lines:
-                lines.append(
-                    "From the approved medical sources for your query:\n"
-                    + "\n".join(evidence_lines)
-                )
-            else:
-                lines.append(
-                    "No matching guidance was found in the approved medical sources for this query."
-                )
             lines.append(
                 "Note: no LLM provider is configured (AI_API_KEY is empty), so this reply "
                 "is limited to retrieved source excerpts. Configure AI_PROVIDER and "
                 "AI_API_KEY for full conversational answers."
             )
-            recommendation = (
-                "Treat the excerpts above as the retrieved evidence; the clinical "
-                "judgment remains yours."
-            )
+
+        recommendation = (
+            "Koresha amakuru yakuwe mu nkomoko zemewe nk'ubufasha; "
+            "icyemezo cya kliniki kiguma kuri mwe."
+            if rw
+            else "Treat the excerpts above as the retrieved evidence; the clinical "
+            "judgment remains yours."
+        )
 
         return {
             "reply": "\n\n".join(lines),

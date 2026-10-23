@@ -3,7 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../context/AuthContext";
 import { errorMessage } from "../../hooks/useAsync";
-import { Field } from "../../components/ui";
+import { Field, PasswordInput } from "../../components/ui";
 import { MobileDownloadButton } from "../../components/common/MobileAppDownloadModal";
 
 export function LoginPage() {
@@ -62,11 +62,9 @@ export function LoginPage() {
               />
             </Field>
             <Field label={t("auth.password")} htmlFor="password">
-              <input
+              <PasswordInput
                 id="password"
-                type="password"
-                required
-                className="input"
+                autoComplete="current-password"
                 placeholder={t("auth.passwordPlaceholder")}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}

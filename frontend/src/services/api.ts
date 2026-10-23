@@ -137,6 +137,13 @@ export const aiAPI = {
     context?: Record<string, unknown>;
     conversation_id?: number;
   }) => api.post("/ai/professional-chat/", data),
+  uploadAndAnalyze: (formData: FormData) =>
+    api.post("/ai/upload-and-analyze/", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }),
+  documents: () => api.get("/ai/documents/"),
+  documentDetail: (id: number) => api.get(`/ai/documents/${id}/`),
+  deleteDocument: (id: number) => api.delete(`/ai/documents/${id}/`),
   conversations: (kind?: "patient" | "professional") =>
     api.get("/ai/conversations/", { params: kind ? { kind } : {} }),
   conversation: (id: number) => api.get(`/ai/conversations/${id}/`),
@@ -202,6 +209,10 @@ export const knowledgeAPI = {
   updateSource: (id: number, data: any) => api.patch(`/knowledge/sources/${id}/`, data),
   deleteSource: (id: number) => api.delete(`/knowledge/sources/${id}/delete/`),
   syncIndex: () => api.post("/knowledge/sources/sync/"),
+  documents: (source?: number) => api.get("/knowledge/documents/", { params: { source } }),
+  addDocument: (data: any) => api.post("/knowledge/documents/add/", data),
+  updateDocument: (id: number, data: any) => api.patch(`/knowledge/documents/${id}/`, data),
+  deleteDocument: (id: number) => api.delete(`/knowledge/documents/${id}/delete/`),
   search: (data: { query: string; limit?: number; filter_approved?: boolean }) =>
     api.post("/knowledge/search/", data),
 };

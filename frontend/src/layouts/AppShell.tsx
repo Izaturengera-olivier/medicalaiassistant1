@@ -65,6 +65,7 @@ function navForRole(role: string): NavItem[] {
       return [
         { to: "/app", labelKey: "nav.dashboard", icon: ICONS.dashboard, end: true },
         { to: "/app/assessment", labelKey: "nav.assessment", icon: ICONS.chat },
+        { to: "/app/ai-assistant", labelKey: "nav.aiAssistant", icon: ICONS.ai },
         { to: "/app/history", labelKey: "nav.history", icon: ICONS.history },
         { to: "/app/profile", labelKey: "nav.profile", icon: ICONS.profile },
       ];

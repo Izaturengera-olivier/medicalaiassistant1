@@ -3,19 +3,43 @@
 from rest_framework import serializers
 from django.utils.translation import gettext_lazy as _
 
-from .models import MedicalKnowledgeSource, RetrievedEvidence
+from .models import KnowledgeDocument, MedicalKnowledgeSource, RetrievedEvidence
 
 
 class MedicalKnowledgeSourceSerializer(serializers.ModelSerializer):
     """Serializer for MedicalKnowledgeSource."""
 
+    document_count = serializers.IntegerField(source="documents.count", read_only=True)
+
     class Meta:
         model = MedicalKnowledgeSource
         fields = [
-            "id", "name", "url", "source_type", "approval_status",
-            "last_verified_date", "retrieval_config", "notes", "created_at", "updated_at"
+            "id", "source_key", "name", "url", "source_type", "approval_status",
+            "last_verified_date", "retrieval_config", "notes", "document_count",
+            "created_at", "updated_at"
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["id", "source_key", "created_at", "updated_at"]
+
+
+class KnowledgeDocumentSerializer(serializers.ModelSerializer):
+    """Serializer for the guidance passages retrieval hands to the model."""
+
+    source_name = serializers.CharField(source="source.name", read_only=True)
+
+    class Meta:
+        model = KnowledgeDocument
+        fields = [
+            "id", "document_key", "source", "source_name", "title", "content",
+            "url", "is_active", "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "document_key", "created_at", "updated_at"]
+
+    def validate_source(self, value):
+        if value.approval_status != "approved":
+            raise serializers.ValidationError(
+                _("Only approved sources may publish knowledge documents.")
+            )
+        return value
 
 
 class RetrievedEvidenceSerializer(serializers.ModelSerializer):

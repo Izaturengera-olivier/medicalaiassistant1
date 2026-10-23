@@ -5,6 +5,10 @@ from .views import (
     update_source,
     delete_source,
     sync_knowledge_base,
+    list_documents,
+    add_document,
+    update_document,
+    delete_document,
     search_knowledge,
     check_source_reliability,
 )
@@ -15,6 +19,10 @@ urlpatterns = [
     path("sources/sync/", sync_knowledge_base, name="sync_knowledge_base"),
     path("sources/<int:pk>/", update_source, name="update_source"),
     path("sources/<int:pk>/delete/", delete_source, name="delete_source"),
+    path("documents/", list_documents, name="list_documents"),
+    path("documents/add/", add_document, name="add_document"),
+    path("documents/<int:pk>/", update_document, name="update_document"),
+    path("documents/<int:pk>/delete/", delete_document, name="delete_document"),
     path("search/", search_knowledge, name="search_knowledge"),
     path("sources/<str:source_id>/reliability/", check_source_reliability, name="check_source_reliability"),
 ]

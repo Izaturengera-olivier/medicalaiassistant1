@@ -217,6 +217,70 @@ class TestConversationService:
 
 
 @pytest.mark.django_db
+class TestFollowUpQuestions:
+    """The stand-alone follow-up endpoint must ask about *this* consultation."""
+
+    def test_chief_complaint_drives_the_questions(self):
+        questions = AIService().generate_follow_up_questions(
+            consultation_context={"chief_complaint": "I have had severe back pain for three days"},
+            current_symptoms=[],
+        )
+
+        assert any("back pain" in question for question in questions)
+
+    def test_symptoms_already_on_the_consultation_are_used(self):
+        questions = AIService().generate_follow_up_questions(
+            consultation_context={
+                "chief_complaint": "",
+                "symptoms": ["Stomach pain"],
+            },
+            current_symptoms=[],
+        )
+
+        assert any("abdominal" in question for question in questions)
+
+    def test_questions_already_asked_are_not_repeated(self):
+        asked = "How long have you had the back pain?"
+        questions = AIService().generate_follow_up_questions(
+            consultation_context={
+                "chief_complaint": "I have had severe back pain for three days",
+                "already_asked": [asked],
+            },
+            current_symptoms=[],
+        )
+
+        assert asked not in questions
+        assert questions
+
+    def test_kinyarwanda_context_gets_kinyarwanda_questions(self):
+        questions = AIService().generate_follow_up_questions(
+            consultation_context={"chief_complaint": "mfite umuriro n'inkorora"},
+            current_symptoms=[],
+        )
+
+        assert all("?" in question for question in questions)
+        assert any("Umuriro" in question for question in questions)
+
+    def test_without_any_context_it_still_asks_something(self):
+        assert AIService().generate_follow_up_questions({}, [])
+
+    url = "/api/ai/follow-up/"
+
+    def test_endpoint_returns_symptom_specific_questions(self, patient_client, consultation):
+        _user, client = patient_client
+        response = client.post(
+            self.url,
+            {"consultation_id": consultation.id, "current_symptoms": []},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.data
+        questions = response.data["questions"]
+        assert questions
+        assert any("fever" in question.lower() or "Headache" in question for question in questions)
+
+
+@pytest.mark.django_db
 class TestConversationEndpoint:
     """The /api/ai/analyze-symptoms/ endpoint and its persistence."""
 

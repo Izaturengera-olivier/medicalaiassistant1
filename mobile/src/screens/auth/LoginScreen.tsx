@@ -11,6 +11,7 @@ import {
   Platform,
 } from "react-native";
 import { useAuth } from "../../context/AuthContext";
+import { PasswordInput } from "../../components/PasswordInput";
 
 export const LoginScreen = ({ navigation }: any) => {
   const { login } = useAuth();
@@ -71,13 +72,7 @@ export const LoginScreen = ({ navigation }: any) => {
           />
 
           <Text style={styles.label}>Password</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="••••••••"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-          />
+          <PasswordInput value={password} onChangeText={setPassword} />
 
           <TouchableOpacity
             style={styles.button}

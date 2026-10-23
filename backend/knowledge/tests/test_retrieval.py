@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import Mock
 
+from knowledge.models import KnowledgeDocument, MedicalKnowledgeSource
 from knowledge.services import KnowledgeService, RetrievalService
 
 
@@ -133,3 +134,82 @@ def test_formatted_evidence_keeps_enough_content_to_ground_an_answer(retrieval_s
     top_content = results[0]["content"]
     expected = top_content[: retrieval_service.EVIDENCE_CONTENT_CHARS]
     assert expected in formatted
+
+
+@pytest.mark.django_db
+def test_admin_approved_document_becomes_retrievable():
+    """The database, not Python literals, decides what the AI is allowed to cite."""
+    source = MedicalKnowledgeSource.objects.create(
+        name="Rwanda Biomedical Centre",
+        url="https://www.cbr.gov.rw",
+        source_type="HOSPITAL",
+        approval_status="approved",
+    )
+    KnowledgeDocument.objects.create(
+        source=source,
+        document_key="cbr_rabies_post_exposure",
+        title="Rabies post-exposure prophylaxis",
+        content="Any bite that breaks the skin needs wound washing with soap and water and immediate assessment at a health facility for rabies prophylaxis.",
+        url="https://www.cbr.gov.rw",
+    )
+
+    results = RetrievalService().retrieve_evidence("dog bite wound rabies")
+
+    assert any(item["title"] == "Rabies post-exposure prophylaxis" for item in results)
+    assert any(item["source_name"] == "Rwanda Biomedical Centre" for item in results)
+    assert all(item["source_id"] != "" for item in results)
+
+
+@pytest.mark.django_db
+def test_pending_source_documents_never_reach_the_model():
+    """AI_SAFETY.md: unapproved documents are filtered before the prompt."""
+    source = MedicalKnowledgeSource.objects.create(
+        name="Unreviewed Blog Network",
+        url="https://example.com",
+        source_type="LITERATURE",
+        approval_status="pending",
+    )
+    KnowledgeDocument.objects.create(
+        source=source,
+        document_key="blog_rabies",
+        title="Rabies cured by garlic",
+        content="Rabies can be cured at home with garlic.",
+        url="https://example.com",
+    )
+
+    results = RetrievalService().retrieve_evidence("dog bite wound rabies")
+
+    assert all(item["source_id"] != source.source_key for item in results)
+
+
+@pytest.mark.django_db
+def test_new_common_complaints_have_approved_evidence(retrieval_service):
+    """Topics patients here ask about must be answerable from the approved corpus."""
+    queries = {
+        "coughing blood and losing weight at night": "Tuberculosis",
+        "my child breathes fast and the chest pulls in": "Pneumonia",
+        "watery diarrhoea with sunken eyes and thirst": "Cholera",
+        "sudden weakness on one side and slurred speech": "Stroke",
+        "fever with stiff neck and confusion": "Meningitis",
+        "dog bite wound washing": "Rabies",
+        "burn from hot water at home": "Burns",
+        "sad empty feeling for two weeks no pleasure": "Depression",
+        "tired pale breathless on exertion": "Anaemia",
+    }
+
+    for query, expected in queries.items():
+        results = retrieval_service.retrieve_evidence(query, max_results=3)
+        assert any(expected in item["title"] for item in results), f"{query} -> {expected}"
+
+
+@pytest.mark.django_db
+def test_deactivating_a_source_removes_it_from_a_new_service():
+    """Withdrawing a source stops it being cited without a restart."""
+    service = KnowledgeService()
+    assert service.verify_source("who")
+
+    assert service.update_source_status("who", "deprecated") is True
+
+    fresh = KnowledgeService()
+    assert not fresh.verify_source("who")
+    assert fresh.search_knowledge("fever and headache")  # other sources still serve

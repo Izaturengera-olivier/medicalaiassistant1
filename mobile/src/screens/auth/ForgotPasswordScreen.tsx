@@ -13,6 +13,7 @@ import {
   Alert,
 } from "react-native";
 import { authAPI } from "../../services/api";
+import { PasswordInput } from "../../components/PasswordInput";
 
 // The backend returns {"message": ...} for throttling/send failures but one
 // error list per field for validation failures, so both shapes need handling.
@@ -167,23 +168,11 @@ export const ForgotPasswordScreen = ({ navigation }: any) => {
                 />
 
                 <Text style={styles.label}>New Password</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="••••••••"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                />
+                <PasswordInput value={password} onChangeText={setPassword} />
                 <Text style={styles.hint}>At least 8 characters.</Text>
 
                 <Text style={styles.label}>Confirm New Password</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="••••••••"
-                  value={passwordConfirm}
-                  onChangeText={setPasswordConfirm}
-                  secureTextEntry
-                />
+                <PasswordInput value={passwordConfirm} onChangeText={setPasswordConfirm} />
 
                 <TouchableOpacity
                   style={styles.button}

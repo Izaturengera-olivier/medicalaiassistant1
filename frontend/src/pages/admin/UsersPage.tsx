@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAsync, errorMessage } from "../../hooks/useAsync";
 import { usersAPI } from "../../services/api";
-import { Badge, ErrorState, Field, Loading, PageHeader, Panel, formatDate, roleLabel, unwrapList } from "../../components/ui";
+import { Badge, ErrorState, Field, Loading, PageHeader, Panel, PasswordInput, formatDate, roleLabel, unwrapList } from "../../components/ui";
 
 interface UserRow {
   id: number;
@@ -248,7 +248,7 @@ export function UsersPage() {
                 <input type="email" className="input" required value={newUser.email} onChange={(e) => setNewUser({...newUser, email: e.target.value})} />
               </Field>
               <Field label="Initial Password">
-                <input type="password" className="input" required minLength={6} value={newUser.password} onChange={(e) => setNewUser({...newUser, password: e.target.value})} />
+                <PasswordInput id="new-user-password" autoComplete="new-password" minLength={6} value={newUser.password} onChange={(e) => setNewUser({...newUser, password: e.target.value})} />
               </Field>
               <Field label="Role">
                 <select className="select" value={newUser.role} onChange={(e) => setNewUser({...newUser, role: e.target.value})}>

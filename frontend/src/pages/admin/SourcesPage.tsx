@@ -10,12 +10,29 @@ interface Source {
   url: string;
   source_type: string;
   approval_status: string;
+  document_count?: number;
   last_verified_date?: string | null;
   notes?: string;
 }
 
 interface SourcesResponse {
   sources: Source[];
+  total: number;
+}
+
+interface KnowledgeDoc {
+  id: number;
+  document_key: string;
+  source: number;
+  source_name: string;
+  title: string;
+  content: string;
+  url?: string;
+  is_active: boolean;
+}
+
+interface DocumentsResponse {
+  documents: KnowledgeDoc[];
   total: number;
 }
 
@@ -26,6 +43,11 @@ export function SourcesPage() {
   const { data, loading, error, reload } = useAsync<SourcesResponse>(
     () => knowledgeAPI.sources().then((r) => r.data as SourcesResponse)
   );
+  const {
+    data: docsData,
+    loading: docsLoading,
+    reload: reloadDocs,
+  } = useAsync<DocumentsResponse>(() => knowledgeAPI.documents().then((r) => r.data as DocumentsResponse));
 
   const [form, setForm] = useState({
     name: "",
@@ -34,6 +56,11 @@ export function SourcesPage() {
     approval_status: "pending",
     notes: "",
   });
+  const [docForm, setDocForm] = useState({ source: "", title: "", content: "", url: "" });
+  const [savingDoc, setSavingDoc] = useState(false);
+  const [docError, setDocError] = useState<string | null>(null);
+  const [docSaved, setDocSaved] = useState(false);
+  const [expandedDoc, setExpandedDoc] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -81,11 +108,58 @@ export function SourcesPage() {
     setSyncMessage(null);
     try {
       const res = await knowledgeAPI.syncIndex();
-      setSyncMessage(res.data.message || "Vector index synchronized.");
+      setSyncMessage(res.data.message || "Retrieval is live.");
+      reload();
+      reloadDocs();
     } catch (err) {
       setSaveError(errorMessage(err));
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const approvedSources = (data?.sources || []).filter((s) => s.approval_status === "approved");
+
+  const submitDocument = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingDoc(true);
+    setDocError(null);
+    setDocSaved(false);
+    try {
+      await knowledgeAPI.addDocument({
+        source: Number(docForm.source),
+        title: docForm.title,
+        content: docForm.content,
+        url: docForm.url,
+        is_active: true,
+      });
+      setDocSaved(true);
+      setDocForm({ source: docForm.source, title: "", content: "", url: "" });
+      reloadDocs();
+      reload();
+    } catch (err) {
+      setDocError(errorMessage(err));
+    } finally {
+      setSavingDoc(false);
+    }
+  };
+
+  const toggleDocument = async (doc: KnowledgeDoc) => {
+    try {
+      await knowledgeAPI.updateDocument(doc.id, { is_active: !doc.is_active });
+      reloadDocs();
+    } catch (err) {
+      setDocError(errorMessage(err));
+    }
+  };
+
+  const handleDeleteDocument = async (doc: KnowledgeDoc) => {
+    if (!window.confirm(`Delete knowledge document "${doc.title}"?`)) return;
+    try {
+      await knowledgeAPI.deleteDocument(doc.id);
+      reloadDocs();
+    } catch (err) {
+      setDocError(errorMessage(err));
     }
   };
 
@@ -122,6 +196,7 @@ export function SourcesPage() {
                     <th>{t("admin.sources.name")}</th>
                     <th>{t("admin.sources.type")}</th>
                     <th>{t("admin.sources.approval")}</th>
+                    <th>{t("admin.documents.countHeader")}</th>
                     <th>{t("admin.sources.url")}</th>
                     <th>{t("admin.sources.lastVerified")}</th>
                     <th>Actions</th>
@@ -146,6 +221,9 @@ export function SourcesPage() {
                           <option value="rejected">Rejected</option>
                           <option value="deprecated">Deprecated</option>
                         </select>
+                      </td>
+                      <td>
+                        <span title={t("admin.documents.countHint")}>{s.document_count ?? 0}</span>
                       </td>
                       <td>
                         <a href={s.url} target="_blank" rel="noopener noreferrer">
@@ -205,6 +283,144 @@ export function SourcesPage() {
               </button>
             </div>
           </form>
+        </Panel>
+
+        <Panel
+          title={t("admin.documents.listTitle")}
+          subtitle={t("admin.documents.listSub")}
+          bodyless
+        >
+          {docsLoading ? (
+            <Loading />
+          ) : docError ? (
+            <div className="error-box">{docError}</div>
+          ) : !docsData || docsData.documents.length === 0 ? (
+            <div className="state-box">{t("admin.documents.empty")}</div>
+          ) : (
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>{t("admin.documents.title")}</th>
+                    <th>{t("admin.documents.source")}</th>
+                    <th>{t("admin.documents.available")}</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {docsData.documents.map((doc) => (
+                    <tr key={doc.id}>
+                      <td className="cell-strong">
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-ghost"
+                          onClick={() => setExpandedDoc((open) => (open === doc.id ? null : doc.id))}
+                        >
+                          {expandedDoc === doc.id ? "▾" : "▸"} {doc.title}
+                        </button>
+                        {expandedDoc === doc.id && (
+                          <p style={{ margin: "8px 0 0", whiteSpace: "pre-wrap", fontWeight: 400 }}>
+                            {doc.content}
+                            {doc.url && (
+                              <>
+                                {" — "}
+                                <a href={doc.url} target="_blank" rel="noopener noreferrer">
+                                  {doc.url}
+                                </a>
+                              </>
+                            )}
+                          </p>
+                        )}
+                      </td>
+                      <td>{doc.source_name}</td>
+                      <td>
+                        <Badge tone={doc.is_active ? "success" : "neutral"}>
+                          {doc.is_active ? t("admin.documents.searchable") : t("admin.documents.retired")}
+                        </Badge>
+                      </td>
+                      <td>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button type="button" className="btn btn-sm btn-outline" onClick={() => void toggleDocument(doc)}>
+                            {doc.is_active ? t("admin.documents.retire") : t("admin.documents.reinstate")}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline"
+                            style={{ color: "#d9534f", borderColor: "#d9534f" }}
+                            onClick={() => void handleDeleteDocument(doc)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+
+        <Panel title={t("admin.documents.addTitle")} subtitle={t("admin.documents.addSub")}>
+          {docSaved && <div className="success-box">{t("admin.documents.added")}</div>}
+          {approvedSources.length === 0 ? (
+            <div className="state-box">{t("admin.documents.needApprovedSource")}</div>
+          ) : (
+            <form onSubmit={submitDocument}>
+              <div className="form-grid">
+                <Field label={t("admin.documents.sourceLabel")} htmlFor="docsource">
+                  <select
+                    id="docsource"
+                    className="select"
+                    value={docForm.source}
+                    required
+                    onChange={(e) => setDocForm((f) => ({ ...f, source: e.target.value }))}
+                  >
+                    <option value="">{t("admin.documents.chooseSource")}</option>
+                    {approvedSources.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label={t("admin.documents.titleLabel")} htmlFor="doctitle">
+                  <input
+                    id="doctitle"
+                    className="input"
+                    value={docForm.title}
+                    required
+                    onChange={(e) => setDocForm((f) => ({ ...f, title: e.target.value }))}
+                  />
+                </Field>
+                <Field label={t("admin.documents.urlLabel")} htmlFor="docurl" span2>
+                  <input
+                    id="docurl"
+                    type="url"
+                    className="input"
+                    value={docForm.url}
+                    required
+                    onChange={(e) => setDocForm((f) => ({ ...f, url: e.target.value }))}
+                  />
+                </Field>
+                <Field label={t("admin.documents.contentLabel")} htmlFor="doccontent" span2>
+                  <textarea
+                    id="doccontent"
+                    className="textarea"
+                    rows={5}
+                    value={docForm.content}
+                    required
+                    onChange={(e) => setDocForm((f) => ({ ...f, content: e.target.value }))}
+                  />
+                </Field>
+              </div>
+              <div className="form-actions">
+                <button type="submit" className="btn btn-primary" disabled={savingDoc}>
+                  {savingDoc ? t("admin.documents.adding") : t("admin.documents.add")}
+                </button>
+              </div>
+            </form>
+          )}
         </Panel>
       </div>
     </>

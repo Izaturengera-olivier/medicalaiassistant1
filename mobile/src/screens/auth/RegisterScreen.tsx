@@ -13,6 +13,7 @@ import {
   Alert,
 } from "react-native";
 import { useAuth } from "../../context/AuthContext";
+import { PasswordInput } from "../../components/PasswordInput";
 
 // Django's MinimumLengthValidator rejects anything shorter, and the API returns
 // one error list per field, so every field has to be surfaced, not just email.
@@ -107,7 +108,7 @@ export const RegisterScreen = ({ navigation }: any) => {
           <TextInput style={styles.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
 
           <Text style={styles.label}>Password</Text>
-          <TextInput style={styles.input} value={password} onChangeText={setPassword} secureTextEntry />
+          <PasswordInput value={password} onChangeText={setPassword} />
           <Text style={styles.hint}>At least 8 characters.</Text>
 
           <Text style={styles.label}>Account Role</Text>

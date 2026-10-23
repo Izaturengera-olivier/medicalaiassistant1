@@ -1,14 +1,29 @@
 """Pluggable LLM provider interface. Real providers use an OpenAI-compatible API."""
 
 import json
+import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 import requests
 
-from core.exceptions import AIServiceError
+from core.exceptions import AIServiceError, AIResponseTruncatedError
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
+
+# Reasoning models (openai/gpt-oss-20b on Groq) spend most of the completion on
+# hidden reasoning tokens before emitting any JSON. Under the provider default
+# budget the content comes back empty and Groq rejects the call with
+# 400 json_validate_failed, which silently degrades users to the mock template.
+# The budget has to cover hidden reasoning PLUS a deliberately long, sectioned
+# plain-text reply (150-350 words) plus the rest of the JSON object, so it is set
+# well above the visible answer size. Measured against the real Groq endpoint:
+# a 300-word cited reply with the full JSON payload lands around 900-1300
+# completion tokens including reasoning, and anything clipped by the cap now
+# raises AIResponseTruncatedError instead of passing silently.
+DEFAULT_MAX_TOKENS = 8192
 
 
 class LLMProvider(ABC):
@@ -58,11 +73,13 @@ class OpenAICompatibleProvider(LLMProvider):
         model: str,
         base_url: str = DEFAULT_BASE_URL,
         timeout: int = 60,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ):
         self.api_key = api_key
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.max_tokens = max_tokens
 
     def complete_structured(
         self,
@@ -80,6 +97,7 @@ class OpenAICompatibleProvider(LLMProvider):
                     "model": self.model,
                     "messages": self._with_schema(messages, schema),
                     "temperature": 0.3,
+                    "max_tokens": self.max_tokens,
                     "response_format": {"type": "json_object"},
                 },
                 timeout=self.timeout,
@@ -94,9 +112,40 @@ class OpenAICompatibleProvider(LLMProvider):
             raise AIServiceError(f"LLM request failed: {exc}") from exc
 
         try:
-            content = response.json()["choices"][0]["message"]["content"]
+            payload = response.json()
+            choice = payload["choices"][0]
+            content = choice["message"]["content"]
+            finish_reason = choice.get("finish_reason")
+            usage = payload.get("usage") or {}
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise AIServiceError(f"Unexpected LLM response shape: {exc}") from exc
+
+        logger.info(
+            "LLM completion model=%s finish_reason=%s prompt_tokens=%s completion_tokens=%s max_tokens=%s",
+            self.model,
+            finish_reason,
+            usage.get("prompt_tokens"),
+            usage.get("completion_tokens"),
+            self.max_tokens,
+        )
+
+        # A reply clipped by the budget arrives as truncated (often unparseable)
+        # JSON and would otherwise be reported as "did not return valid JSON" or,
+        # one layer up, vanish into the mock fallback with no clue why.
+        if finish_reason == "length":
+            logger.error(
+                "LLM reply hit the completion budget (finish_reason=length, "
+                "completion_tokens=%s, max_tokens=%s); raise the provider budget or shorten the prompt.",
+                usage.get("completion_tokens"),
+                self.max_tokens,
+            )
+            raise AIResponseTruncatedError(
+                "The model answer was cut off because it reached the completion "
+                f"limit of {self.max_tokens} tokens "
+                f"(completion_tokens={usage.get('completion_tokens')})."
+            )
+        if finish_reason not in (None, "stop"):
+            logger.warning("LLM generation stopped early: finish_reason=%s", finish_reason)
 
         return self._parse_json(content)
 
@@ -164,6 +213,7 @@ def get_llm_provider(
     api_key: str = "",
     model: str = "",
     base_url: str = "",
+    max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> LLMProvider:
     if name == "mock":
         return MockLLMProvider()
@@ -178,4 +228,5 @@ def get_llm_provider(
         api_key=api_key,
         model=resolved_model,
         base_url=resolved_base_url,
+        max_tokens=max_tokens or DEFAULT_MAX_TOKENS,
     )

@@ -1,13 +1,16 @@
 """HTTP endpoints for ai. Implemented in later phases."""
 
+import logging
+
 from rest_framework import status, views
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, parser_classes, permission_classes
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
-from .models import AIAssessment, ChatConversation, ChatMessage, PossibleCondition
+from .models import AIAssessment, ChatConversation, ChatMessage, MedicalDocument, PossibleCondition
 from .serializers import (
     AIAssessmentSerializer,
     AIAnalysisRequestSerializer,
@@ -15,11 +18,17 @@ from .serializers import (
     AIProfessionalChatRequestSerializer,
     ChatConversationDetailSerializer,
     ChatConversationListSerializer,
+    DocumentAnalysisResponseSerializer,
+    DocumentUploadAnalysisRequestSerializer,
+    MedicalDocumentSerializer,
 )
-from .services import AIService, SymptomAnalysisService, TriageService
+from .services import AIService, DocumentParserService, SymptomAnalysisService, TriageService
 from consultations.models import Consultation, FollowUpQuestion
 from core.constants import SourceType, UserRole
+from core.exceptions import DocumentParseError
 from knowledge.models import MedicalKnowledgeSource, RetrievedEvidence
+
+logger = logging.getLogger(__name__)
 
 _PROFESSIONAL_ROLES = {UserRole.DOCTOR, UserRole.PHARMACIST, UserRole.ADMIN}
 
@@ -283,11 +292,20 @@ def follow_up_questions(request):
     try:
         consultation = Consultation.objects.get(id=consultation_id, patient=request.user)
         
+        assessment = getattr(consultation, "ai_assessment", None)
         consultation_context = {
             "chief_complaint": consultation.chief_complaint,
+            "notes": consultation.doctor_notes,
             "status": consultation.status,
-            "created_at": consultation.created_at.isoformat()
+            "created_at": consultation.created_at.isoformat(),
+            "symptoms": list(assessment.symptoms_identified or []) if assessment else [],
+            "already_asked": list(assessment.follow_up_questions or []) if assessment else [],
         }
+        recorded_symptoms = [
+            ps.symptom.name for ps in consultation.patient_symptoms.select_related("symptom")
+        ]
+        if not current_symptoms:
+            current_symptoms = recorded_symptoms
         
         ai_service = AIService()
         questions = ai_service.generate_follow_up_questions(
@@ -369,3 +387,158 @@ def assess_urgency(request):
             {"error": str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
+def upload_and_analyze_document(request):
+    """
+    Upload a medical document (scanner result, CT/MRI, X-ray, lab report, pathology)
+    and perform deep AI clinical analysis grounded in trusted medical solutions.
+    """
+    serializer = DocumentUploadAnalysisRequestSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        uploaded_file = serializer.validated_data["file"]
+        user_message = serializer.validated_data.get("message", "")
+        consultation_id = serializer.validated_data.get("consultation_id")
+        conversation_id = serializer.validated_data.get("conversation_id")
+        kind = serializer.validated_data.get("kind", "patient")
+
+        # Parse document and extract text & clinical metadata
+        parser_svc = DocumentParserService()
+        parsed = parser_svc.parse_file(
+            file_obj=uploaded_file,
+            filename=uploaded_file.name,
+            content_type=getattr(uploaded_file, "content_type", "")
+        )
+
+        consultation = None
+        if consultation_id:
+            try:
+                if request.user.role == UserRole.PATIENT:
+                    consultation = Consultation.objects.get(id=consultation_id, patient=request.user)
+                else:
+                    consultation = Consultation.objects.get(id=consultation_id)
+            except Consultation.DoesNotExist:
+                return Response({"error": _("Consultation not found")}, status=status.HTTP_404_NOT_FOUND)
+
+        # Resolve or create conversation
+        initial_title = user_message.strip() or f"Scan: {uploaded_file.name}"
+        conversation = _resolve_conversation(request.user, conversation_id, kind, initial_title[:120])
+
+        # Persist the uploaded medical document record
+        doc_record = MedicalDocument.objects.create(
+            user=request.user,
+            consultation=consultation,
+            conversation=conversation,
+            file=uploaded_file,
+            file_name=uploaded_file.name,
+            file_type=getattr(uploaded_file, "content_type", "") or "",
+            file_size=parsed["file_size"],
+            document_category=parsed["category"],
+            extracted_text=parsed["text"][:30000],
+        )
+
+        # Perform intelligent clinical analysis grounded in trusted sources
+        ai_service = AIService()
+        analysis = ai_service.analyze_medical_document(
+            document_text=parsed["text"] or f"File uploaded: {uploaded_file.name}",
+            document_category=parsed["category"],
+            exam_type=parsed["exam_type"],
+            user_message=user_message,
+            user_role=request.user.role,
+        )
+
+        # Update document with analysis
+        doc_record.ai_analysis = analysis
+        doc_record.save(update_fields=["ai_analysis"])
+
+        # Persist user chat message with attached document
+        user_display_text = user_message.strip() or f"Uploaded report: {uploaded_file.name}"
+        ChatMessage.objects.create(
+            conversation=conversation,
+            role="user",
+            content=user_display_text,
+            document=doc_record,
+            details={
+                "attachment": {
+                    "document_id": doc_record.id,
+                    "file_name": doc_record.file_name,
+                    "file_url": doc_record.file.url if doc_record.file else "",
+                    "file_size": doc_record.file_size,
+                    "category": doc_record.document_category,
+                    "exam_type": parsed["exam_type"],
+                }
+            }
+        )
+
+        # Persist assistant reply with structured analysis
+        ChatMessage.objects.create(
+            conversation=conversation,
+            role="assistant",
+            content=analysis.get("reply", ""),
+            details=analysis
+        )
+        conversation.save(update_fields=["updated_at"])
+
+        # Construct response
+        response_payload = {
+            "document_id": doc_record.id,
+            "file_name": doc_record.file_name,
+            "file_url": doc_record.file.url if doc_record.file else "",
+            "document_category": doc_record.document_category,
+            "exam_type": analysis.get("exam_type", parsed["exam_type"]),
+            "document_summary": analysis.get("document_summary", ""),
+            "scan_findings": analysis.get("scan_findings", []),
+            "abnormalities": analysis.get("abnormalities", []),
+            "possible_conditions": analysis.get("possible_conditions", []),
+            "warning_signs": analysis.get("warning_signs", []),
+            "urgency_level": analysis.get("urgency_level", "INFORMATIONAL"),
+            "trusted_solutions": analysis.get("trusted_solutions", []),
+            "recommended_next_step": analysis.get("recommended_next_step", ""),
+            "reply": analysis.get("reply", ""),
+            "sources": analysis.get("sources", []),
+            "conversation_id": conversation.id,
+            "consultation_id": consultation.id if consultation else None,
+            "confidence": analysis.get("confidence", 0.9),
+        }
+
+        resp_serializer = DocumentAnalysisResponseSerializer(response_payload)
+        return Response(resp_serializer.data, status=status.HTTP_201_CREATED)
+
+    except DocumentParseError as exc:
+        return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    except Exception as exc:
+        logger.exception("Document upload and analysis failed")
+        return Response(
+            {"error": _("Document analysis failed. Please try again.")},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def medical_document_list(request):
+    """List uploaded medical documents for the current user."""
+    docs = MedicalDocument.objects.filter(user=request.user).order_by("-created_at")[:100]
+    return Response(MedicalDocumentSerializer(docs, many=True).data)
+
+
+@api_view(["GET", "DELETE"])
+@permission_classes([IsAuthenticated])
+def medical_document_detail(request, pk):
+    """Retrieve or delete an uploaded medical document."""
+    doc = MedicalDocument.objects.filter(id=pk, user=request.user).first()
+    if not doc:
+        return Response({"error": _("Document not found")}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        doc.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    return Response(MedicalDocumentSerializer(doc).data)

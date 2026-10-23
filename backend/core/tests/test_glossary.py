@@ -18,6 +18,15 @@ def test_prefixed_verbs_and_nouns_are_matched_by_stem():
     assert "pain" in expand_query("ndumva mbabara umugongo")
 
 
+def test_prevention_verb_is_not_read_as_the_belly():
+    """"-rinda" (protect) ends in "inda" (belly), which hijacked prevention questions."""
+    expanded = expand_query("nshaka amakuru ku ndwara ya ebola nuko wayirinda")
+
+    assert "abdominal" not in expanded
+    assert "ebola" in expanded
+    assert "prevention" in expanded
+
+
 def test_english_query_is_left_unchanged():
     query = "interaction risk of metronidazole with warfarin"
     assert expand_query(query) == query

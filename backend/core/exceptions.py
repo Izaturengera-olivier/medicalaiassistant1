@@ -38,6 +38,15 @@ class AIServiceError(Exception):
     pass
 
 
+class AIResponseTruncatedError(AIServiceError):
+    """
+    Raised when the provider stopped generating because the completion budget ran
+    out. Distinct from a generic failure so a clipped answer is diagnosable
+    instead of silently degrading into the mock fallback template.
+    """
+    pass
+
+
 class RetrievalError(Exception):
     """
     Raised when medical knowledge retrieval fails.
@@ -48,5 +57,12 @@ class RetrievalError(Exception):
 class MedicationSafetyError(Exception):
     """
     Raised when medication safety checks identify issues.
+    """
+    pass
+
+
+class DocumentParseError(Exception):
+    """
+    Raised when an uploaded file is rejected or cannot be turned into readable text.
     """
     pass

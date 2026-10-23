@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { authAPI } from "../../services/api";
 import { errorMessage } from "../../hooks/useAsync";
-import { Field } from "../../components/ui";
+import { Field, PasswordInput } from "../../components/ui";
 
 type Step = "request" | "verify" | "done";
 
@@ -127,22 +127,18 @@ export function ForgotPasswordPage() {
                   />
                 </Field>
                 <Field label={t("auth.newPassword")} htmlFor="reset-password">
-                  <input
+                  <PasswordInput
                     id="reset-password"
-                    type="password"
-                    required
-                    className="input"
+                    autoComplete="new-password"
                     placeholder={t("auth.passwordPlaceholder")}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                   />
                 </Field>
                 <Field label={t("auth.confirmNewPassword")} htmlFor="reset-password-confirm">
-                  <input
+                  <PasswordInput
                     id="reset-password-confirm"
-                    type="password"
-                    required
-                    className="input"
+                    autoComplete="new-password"
                     placeholder={t("auth.passwordPlaceholder")}
                     value={passwordConfirm}
                     onChange={(e) => setPasswordConfirm(e.target.value)}

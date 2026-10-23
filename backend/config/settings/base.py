@@ -220,6 +220,8 @@ AI_MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
 # Any OpenAI-compatible endpoint works (OpenAI, Groq, vLLM, Ollama at /v1).
 AI_BASE_URL = os.environ.get("AI_BASE_URL", "https://api.openai.com/v1")
 AI_REQUEST_TIMEOUT = int(os.environ.get("AI_REQUEST_TIMEOUT", "60"))
+# Absolute path to the Tesseract binary; empty means it is found on PATH.
+TESSERACT_CMD = os.environ.get("TESSERACT_CMD", "")
 WEB_SEARCH_PROVIDER = os.environ.get("WEB_SEARCH_PROVIDER", "")
 WEB_SEARCH_API_KEY = os.environ.get("WEB_SEARCH_API_KEY", "")
 WEB_SEARCH_URL = os.environ.get(
@@ -230,7 +232,8 @@ WEB_SEARCH_ALLOWED_DOMAINS = [
     domain.strip()
     for domain in os.environ.get(
         "WEB_SEARCH_ALLOWED_DOMAINS",
-        "who.int,moh.gov.rw,rfd.gov.rw,cdc.gov,nih.gov,nhs.uk,mayoclinic.org,medlineplus.gov,ncbi.nlm.nih.gov",
+        "who.int,moh.gov.rw,rfd.gov.rw,cdc.gov,nih.gov,nhs.uk,mayoclinic.org,"
+        "medlineplus.gov,ncbi.nlm.nih.gov,fda.gov,acr.org,nice.org.uk",
     ).split(",")
     if domain.strip()
 ]

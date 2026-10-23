@@ -40,6 +40,73 @@ class ChatConversation(models.Model):
         return self.title or f"Conversation #{self.id}"
 
 
+class MedicalDocument(models.Model):
+    """Uploaded medical document (scan results, lab reports, imaging, etc.)."""
+
+    CATEGORY_CHOICES = [
+        ("imaging_scan", _("Imaging / Scanner Result")),
+        ("lab_result", _("Laboratory Test Result")),
+        ("pathology", _("Pathology / Biopsy Report")),
+        ("discharge_summary", _("Discharge Summary / Clinical Note")),
+        ("prescription", _("Prescription / Medication Order")),
+        ("general", _("General Medical Document")),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="medical_documents",
+        verbose_name=_("user")
+    )
+    consultation = models.ForeignKey(
+        Consultation,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="documents",
+        verbose_name=_("consultation")
+    )
+    conversation = models.ForeignKey(
+        ChatConversation,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="documents",
+        verbose_name=_("conversation")
+    )
+    file = models.FileField(
+        _("file"),
+        upload_to="medical_documents/%Y/%m/"
+    )
+    file_name = models.CharField(_("file name"), max_length=255)
+    file_type = models.CharField(_("file type"), max_length=100, blank=True)
+    file_size = models.PositiveIntegerField(_("file size in bytes"), default=0)
+    document_category = models.CharField(
+        _("document category"),
+        max_length=50,
+        choices=CATEGORY_CHOICES,
+        default="imaging_scan"
+    )
+    extracted_text = models.TextField(_("extracted text"), blank=True)
+    ai_analysis = models.JSONField(
+        _("AI analysis"),
+        default=dict,
+        blank=True,
+        help_text=_("Structured AI analysis of scanner or test findings")
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "medical_documents"
+        verbose_name = _("medical document")
+        verbose_name_plural = _("medical documents")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.file_name} ({self.get_document_category_display()})"
+
+
 class ChatMessage(models.Model):
     """A single message in a saved chat conversation."""
 
@@ -53,6 +120,14 @@ class ChatMessage(models.Model):
         on_delete=models.CASCADE,
         related_name="messages",
         verbose_name=_("conversation")
+    )
+    document = models.ForeignKey(
+        MedicalDocument,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="chat_messages",
+        verbose_name=_("attached document")
     )
     role = models.CharField(max_length=10, choices=ROLE_CHOICES)
     content = models.TextField(_("content"))

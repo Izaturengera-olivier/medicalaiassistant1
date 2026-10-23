@@ -18,8 +18,11 @@ class RetrievalService:
     """Service for retrieving medical evidence from approved sources."""
 
     # Long enough for the model to ground an answer, short enough to keep the
-    # prompt within budget when several sources are retrieved.
-    EVIDENCE_CONTENT_CHARS = 1200
+    # prompt within budget when several sources are retrieved. Measured: every
+    # approved KnowledgeDocument in the corpus is 241-995 characters, so 1600 means
+    # no approved DB passage is ever clipped, while live web-search passages (which
+    # arrive up to 4000 characters) are still bounded instead of flooding the prompt.
+    EVIDENCE_CONTENT_CHARS = 1600
 
     def __init__(self):
         self.knowledge_service = KnowledgeService()
