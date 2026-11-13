@@ -35,6 +35,11 @@ X_FRAME_OPTIONS = "DENY"
 
 # WhiteNoise compressed static files storage
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+MIDDLEWARE = list(MIDDLEWARE)
+MIDDLEWARE.insert(
+    MIDDLEWARE.index("django.middleware.security.SecurityMiddleware") + 1,
+    "whitenoise.middleware.WhiteNoiseMiddleware",
+)
 
 # Permissive CORS origin regex for Render, Railway, and Fly.io subdomains
 CORS_ALLOWED_ORIGIN_REGEXES = [
