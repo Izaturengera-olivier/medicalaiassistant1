@@ -88,6 +88,14 @@ class AIAnalysisRequestSerializer(serializers.Serializer):
         required=False,
         help_text=_("List of current medications")
     )
+    # Optional only for a client that has already asked for location permission;
+    # "which hospital near me" works without them whenever the question names a place.
+    latitude = serializers.FloatField(
+        required=False, min_value=-90, max_value=90, help_text=_("Patient latitude, to rank facilities by distance")
+    )
+    longitude = serializers.FloatField(
+        required=False, min_value=-180, max_value=180, help_text=_("Patient longitude, to rank facilities by distance")
+    )
 
 
 class AIProfessionalChatRequestSerializer(serializers.Serializer):
@@ -112,6 +120,12 @@ class AIProfessionalChatRequestSerializer(serializers.Serializer):
             "Optional case details supplied by the clinician "
             "(patient summary, medications, role, ...)"
         )
+    )
+    latitude = serializers.FloatField(
+        required=False, min_value=-90, max_value=90, help_text=_("Clinician latitude, to rank facilities by distance")
+    )
+    longitude = serializers.FloatField(
+        required=False, min_value=-180, max_value=180, help_text=_("Clinician longitude, to rank facilities by distance")
     )
 
 

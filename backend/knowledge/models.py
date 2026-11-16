@@ -187,3 +187,139 @@ class RetrievedEvidence(models.Model):
 
     def __str__(self):
         return f"Evidence: {self.title[:50]}... (Score: {self.relevance_score})"
+
+
+class HealthFacility(models.Model):
+    """A place in Rwanda where care or medicine is obtained.
+
+    Disease guidance can only say "seek care"; "where, near me" needs a named
+    facility, so this is stored as data rather than prose the model has to recall.
+    """
+
+    FACILITY_TYPE = [
+        ("hospital", _("Hospital")),
+        ("health_center", _("Health centre")),
+        ("health_post", _("Health post")),
+        ("clinic", _("Clinic")),
+        ("pharmacy", _("Pharmacy")),
+        ("other", _("Other")),
+    ]
+
+    external_id = models.CharField(
+        _("external id"),
+        max_length=120,
+        unique=True,
+        help_text=_("Stable identifier from the dataset, used to re-import without duplicating"),
+    )
+    name = models.CharField(_("name"), max_length=300)
+    name_en = models.CharField(_("English name"), max_length=300, blank=True)
+    facility_type = models.CharField(
+        _("facility type"), max_length=20, choices=FACILITY_TYPE, default="other"
+    )
+    province = models.CharField(_("province"), max_length=60, blank=True)
+    district = models.CharField(_("district"), max_length=60, blank=True)
+    sector = models.CharField(_("sector"), max_length=60, blank=True)
+    latitude = models.DecimalField(_("latitude"), max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(_("longitude"), max_digits=9, decimal_places=6, null=True, blank=True)
+    origin = models.CharField(
+        _("origin"),
+        max_length=80,
+        default="OpenStreetMap (ODbL) via the Humanitarian Open Data Team",
+        help_text=_("Where this row came from, kept for the dataset licence"),
+    )
+    is_active = models.BooleanField(
+        _("active"),
+        default=True,
+        help_text=_("Deactivated facilities are kept for audit but never suggested"),
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "knowledge_health_facilities"
+        verbose_name = _("health facility")
+        verbose_name_plural = _("health facilities")
+        ordering = ["name"]
+        indexes = [
+            models.Index(fields=["district"], name="facility_district_idx"),
+            models.Index(fields=["province"], name="facility_province_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.get_facility_type_display()}, {self.district})"
+
+
+class AdminPlace(models.Model):
+    """One official Rwandan administrative unit: province, district, sector, cell or village.
+
+    Patients name the place they are standing in, which is usually a village, cell
+    or neighbourhood rather than a district, and the facility register only carries
+    province/district/sector. Storing the whole hierarchy lets a village name be
+    resolved upward to the sector the register can filter on, instead of giving up
+    and handing the question to the model.
+
+    A row holds its own `name` plus the units above it, so no recursive query is
+    needed; the field for its own level stays empty.
+    """
+
+    LEVEL = [
+        ("province", _("Province")),
+        ("district", _("District")),
+        ("sector", _("Sector")),
+        ("cell", _("Cell")),
+        ("village", _("Village")),
+    ]
+
+    level = models.CharField(_("level"), max_length=10, choices=LEVEL)
+    name = models.CharField(_("name"), max_length=120)
+    name_key = models.CharField(
+        _("matched name"),
+        max_length=120,
+        blank=True,
+        db_index=True,
+        help_text=_(
+            "Lowercased name, so a word from the patient's message finds this row "
+            "without scanning all 17,000 of them"
+        ),
+    )
+    code = models.CharField(
+        _("official code"),
+        max_length=20,
+        help_text=_("Government code for this unit, unique within its level"),
+    )
+    province = models.CharField(_("province"), max_length=60, blank=True)
+    district = models.CharField(_("district"), max_length=60, blank=True)
+    sector = models.CharField(_("sector"), max_length=60, blank=True)
+    cell = models.CharField(_("cell"), max_length=120, blank=True)
+    is_active = models.BooleanField(
+        _("active"),
+        default=True,
+        help_text=_("Deactivated places are kept for audit but never matched"),
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "knowledge_admin_places"
+        verbose_name = _("administrative place")
+        verbose_name_plural = _("administrative places")
+        ordering = ["level", "name"]
+        constraints = [
+            models.UniqueConstraint(fields=["level", "code"], name="admin_place_level_code_uniq")
+        ]
+        indexes = [
+            models.Index(fields=["level", "name"], name="admin_place_level_name_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.get_level_display()} {self.name} ({self.district})"
+
+    @staticmethod
+    def key_for(name) -> str:
+        """The form a patient's word is compared against, so spelling case and
+        double spaces in an admin's edit cannot stop a place from matching."""
+        return " ".join(str(name or "").split()).lower()
+
+    def save(self, *args, **kwargs):
+        self.name_key = self.key_for(self.name)
+        super().save(*args, **kwargs)

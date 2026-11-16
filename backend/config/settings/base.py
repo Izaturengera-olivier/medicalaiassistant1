@@ -225,17 +225,26 @@ AI_BASE_URL = os.environ.get("AI_BASE_URL", "https://api.openai.com/v1")
 AI_REQUEST_TIMEOUT = int(os.environ.get("AI_REQUEST_TIMEOUT", "60"))
 # Absolute path to the Tesseract binary; empty means it is found on PATH.
 TESSERACT_CMD = os.environ.get("TESSERACT_CMD", "")
+# Ordered, comma-separated live-search chain: the first provider that answers
+# supplies the citations, the rest cover an outage or a quota. Empty disables it.
 WEB_SEARCH_PROVIDER = os.environ.get("WEB_SEARCH_PROVIDER", "")
 WEB_SEARCH_API_KEY = os.environ.get("WEB_SEARCH_API_KEY", "")
 WEB_SEARCH_URL = os.environ.get(
     "WEB_SEARCH_URL", "https://api.tavily.com/search"
+)
+# Programmable Search Engine: the key from the Google Cloud console and the cx
+# (engine ID) from the Programmable Search dashboard. Both are needed.
+WEB_SEARCH_GOOGLE_API_KEY = os.environ.get("WEB_SEARCH_GOOGLE_API_KEY", "")
+WEB_SEARCH_GOOGLE_ENGINE_ID = os.environ.get("WEB_SEARCH_GOOGLE_ENGINE_ID", "")
+WEB_SEARCH_GOOGLE_URL = os.environ.get(
+    "WEB_SEARCH_GOOGLE_URL", "https://www.googleapis.com/customsearch/v1"
 )
 WEB_SEARCH_TIMEOUT = int(os.environ.get("WEB_SEARCH_TIMEOUT", "10"))
 WEB_SEARCH_ALLOWED_DOMAINS = [
     domain.strip()
     for domain in os.environ.get(
         "WEB_SEARCH_ALLOWED_DOMAINS",
-        "who.int,moh.gov.rw,rfd.gov.rw,cdc.gov,nih.gov,nhs.uk,mayoclinic.org,"
+        "who.int,moh.gov.rw,rbc.gov.rw,rfd.gov.rw,cdc.gov,nih.gov,nhs.uk,mayoclinic.org,"
         "medlineplus.gov,ncbi.nlm.nih.gov,fda.gov,acr.org,nice.org.uk",
     ).split(",")
     if domain.strip()

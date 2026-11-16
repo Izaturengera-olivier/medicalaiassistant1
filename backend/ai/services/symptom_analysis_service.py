@@ -12,75 +12,95 @@ class SymptomAnalysisService:
     SYMPTOM_PATTERNS = {
         "headache": [
             "headache", "head pain", "migraine", "cephalgia",
-            "umutwe", "umutwe urampandura", "umutwe urandya", "kuribwa mu mutwe"
+            "umutwe", "umutwe urampandura", "umutwe urandya", "kuribwa mu mutwe",
+            "umutwe uremereye", "umutwe urashyuha"
         ],
         "fever": [
             "fever", "high temperature", "pyrexia", "hot", "temperature",
-            "umuriro", "ubushyuhe", "gushyuha", "furere", "gutitira"
+            "umuriro", "ubushyuhe", "gushyuha", "furere", "gutitira",
+            "umuriro mwinshi", "umubiri urashyuha"
         ],
         "cough": [
             "cough", "coughing", "chesty cough", "dry cough",
-            "inkorora", "gukosora", "kosora"
+            "inkorora", "gukosora", "kosora", "gukorora", "inkorora y'akamenyero"
         ],
         "body pain": [
             "body pain", "body ache", "muscle pain", "myalgia", "soreness",
-            "ububabare mu mubiri", "umubiri urambabaza", "kuribwa mu mubiri", "ngingo"
+            "ububabare mu mubiri", "umubiri urambabaza", "kuribwa mu mubiri", "ngingo",
+            "umubiri wose urandya", "umubiri wose urambabaza"
         ],
         "stomach pain": [
             "stomach pain", "abdominal pain", "belly pain", "gastralgia",
             "nda", "mu nda", "ububabare mu nda", "ndababara mu nda", "mbabara mu nda",
-            "igifu", "igifu kirandya", "ububabare bwo mu igifu"
+            "igifu", "igifu kirandya", "ububabare bwo mu igifu", "kuribwa mu nda",
+            "inda irandya", "ibisebe mu gifu"
         ],
         "nausea": [
             "nausea", "feeling sick", "queasy", "upset stomach",
-            "gusesema", "isesemi", "isazi", "igifu kigurumana"
+            "gusesema", "isesemi", "isazi", "igifu kigurumana", "kumva nshaka kuruka"
         ],
         "vomiting": [
             "vomiting", "throwing up", "emesis", "throw up",
-            "kuruka", "kuhira", "vomissman"
+            "kuruka", "kuhira", "vomissman", "kuruka amaraso", "ndaruka"
         ],
         "diarrhea": [
             "diarrhea", "diarrhoea", "loose stools", "frequent bowel movements",
-            "impiswi", "gucibwamo", "gutuza"
+            "impiswi", "gucibwamo", "gutuza", "guhitwa", "umusarane w'amazi"
         ],
         "fatigue": [
             "fatigue", "tiredness", "exhaustion", "weakness", "lethargy",
-            "umunaniro", "naniwe", "kuruha", "gucika intege"
+            "umunaniro", "naniwe", "kuruha", "gucika intege", "kunanirwa",
+            "ubunaniro ukabije", "intege nke"
         ],
         "dizziness": [
             "dizziness", "lightheaded", "vertigo", "spinning",
-            "kuzungerwa", "ikizunguzungu", "ibingibingi"
+            "kuzungerwa", "ikizunguzungu", "ibingibingi", "kuzungera"
         ],
         "chest pain": [
             "chest pain", "chest discomfort", "chest pressure", "angina",
-            "mu gituza", "mu gatuza", "ububabare mu gituza", "igituza kirambabaza", "gituza", "gatuza"
+            "mu gituza", "mu gatuza", "ububabare mu gituza", "igituza kirambabaza",
+            "gituza", "gatuza", "gatuza karambabaza", "kuribwa mu gituza"
         ],
         "shortness of breath": [
             "shortness of breath", "breathlessness", "dyspnea", "difficulty breathing",
-            "guhumeka bigoranye", "kubura umwuka", "umwuka wanjye", "uhumeka nabi"
+            "guhumeka bigoranye", "kubura umwuka", "umwuka wanjye", "uhumeka nabi",
+            "guhumeka nabi", "kunanirwa guhumeka", "umwuka uri kumbana muke"
         ],
         "sore throat": [
             "sore throat", "throat pain", "pharyngitis", "scratchy throat",
-            "muhogo", "ububabare mu muhogo", "umuhogo urambabaza"
+            "muhogo", "ububabare mu muhogo", "umuhogo urambabaza", "kuribwa mu muhogo"
         ],
         "runny nose": [
             "runny nose", "rhinorrhea", "stuffy nose", "nasal congestion",
-            "ibicurane", "amazuru itemba", "gutana mu mazuru"
+            "ibicurane", "amazuru itemba", "gutana mu mazuru", "amazuru afunze"
         ],
         "sneezing": [
             "sneezing", "sneeze", "kwasamura"
         ],
         "rash": [
             "rash", "skin rash", "hives", "itchy skin",
-            "ibiheri", "uburuka", "uruhu rurandya", "ku ryaryata"
+            "ibiheri", "uburuka", "uruhu rurandya", "ku ryaryata", "kuryaryata", "ibishishi"
         ],
         "swelling": [
             "swelling", "edema", "inflammation", "puffiness",
-            "kubyimba", "kubyimbya"
+            "kubyimba", "kubyimbya", "kubyimba amaguru"
         ],
         "back pain": [
             "back pain", "lower back pain", "lumbar pain",
-            "umugongo", "ububabare mu mugongo", "mbabara umugongo", "umugongo urambabaza"
+            "umugongo", "ububabare mu mugongo", "mbabara umugongo", "umugongo urambabaza",
+            "kuribwa mu mugongo", "ndababara umugongo"
+        ],
+        "joint pain": [
+            "joint pain", "arthralgia", "arthritis", "stiff joints",
+            "ububabare mu ngingo", "kuribwa mu ngingo", "ingingo zirandya", "ingingo"
+        ],
+        "chills": [
+            "chills", "shivering", "rigors", "cold feeling",
+            "gutitira", "ubukonje bwinshi", "umubiri uratitira"
+        ],
+        "neck stiffness": [
+            "stiff neck", "neck rigidity", "nuchal rigidity",
+            "ijosi rikomeye", "ijosi rirakanyaraye", "kuribwa mu ijosi"
         ]
     }
 
@@ -92,14 +112,15 @@ class SymptomAnalysisService:
         r"(\d+)\s*(hour|hours|h|amasaha|isaha)",
         r"(\d+)\s*(minute|minutes|min|iminota)",
         r"(today|yesterday|ejo|ejo hashize|uyu munsi)",
-        r"(a few days|several days|couple of days|iminsi mike|iminsi 2|iminsi 3)",
+        r"(a few days|several days|couple of days|iminsi mike|iminsi 2|iminsi 3|iminsi 4|iminsi 5)",
+        r"(kuva ejo|kuva uyu munsi|kuva mu gitondo|kuva ejo hashize)",
     ]
 
     # Severity indicators (English and Kinyarwanda)
     SEVERITY_INDICATORS = {
-        "mild": ["mild", "slight", "minor", "low", "light", "byoroheje", "gake", "bikerense"],
-        "moderate": ["moderate", "medium", "some", "fair", "biringaniye", "biragabanyutse"],
-        "severe": ["severe", "bad", "terrible", "awful", "extreme", "intense", "strong", "cyane", "gikabije", "bikarishye"],
+        "mild": ["mild", "slight", "minor", "low", "light", "byoroheje", "gake", "bikerense", "bitararenga"],
+        "moderate": ["moderate", "medium", "some", "fair", "biringaniye", "biragabanyutse", "biri hagati"],
+        "severe": ["severe", "bad", "terrible", "awful", "extreme", "intense", "strong", "cyane", "gikabije", "bikarishye", "bikomeye cyane", "birenze"],
     }
 
     @classmethod
@@ -190,8 +211,11 @@ class SymptomAnalysisService:
             "chest pain", "difficulty breathing", "shortness of breath",
             "severe bleeding", "loss of consciousness", "confusion",
             "slurred speech", "sudden weakness", "stroke", "heart attack",
-            "ububabare mu gituza", "ububabare mu gatuza", "ndababara mu gatuza", "kubura umwuka", "kuva amaraso cyane",
-            "guta ubwenge", "gucika intege ku ruhande", "kuruka amaraso"
+            "ububabare mu gituza", "ububabare mu gatuza", "ndababara mu gatuza",
+            "kubura umwuka", "kuva amaraso cyane", "guta ubwenge",
+            "gucika intege ku ruhande", "kuruka amaraso", "ijosi rikomeye",
+            "kugwa igihumure", "amaraso mu musarane", "gutitira bikabije",
+            "kunanirwa konka", "gukanyarara"
         ]
         
         text_lower = text.lower()

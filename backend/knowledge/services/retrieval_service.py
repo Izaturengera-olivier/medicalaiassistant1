@@ -2,6 +2,7 @@
 
 import logging
 from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
 
 import requests
 from django.conf import settings
@@ -18,10 +19,10 @@ class RetrievalService:
     """Service for retrieving medical evidence from approved sources."""
 
     # Long enough for the model to ground an answer, short enough to keep the
-    # prompt within budget when several sources are retrieved. Measured: every
-    # approved KnowledgeDocument in the corpus is 241-995 characters, so 1600 means
-    # no approved DB passage is ever clipped, while live web-search passages (which
-    # arrive up to 4000 characters) are still bounded instead of flooding the prompt.
+    # prompt within a free-tier per-minute budget. Measured: every approved
+    # KnowledgeDocument in the corpus is 241-995 characters, so 1600 never clips
+    # an approved passage, while live web-search passages (which arrive up to 4000
+    # characters) are bounded instead of flooding the prompt.
     EVIDENCE_CONTENT_CHARS = 1600
 
     def __init__(self):
@@ -85,23 +86,125 @@ class RetrievalService:
         return evidence
 
     def _search_web(self, query: str, max_results: int) -> List[Dict[str, Any]]:
-        """Retrieve live results without making network calls in offline mode."""
-        provider = getattr(settings, "WEB_SEARCH_PROVIDER", "")
+        """Ask the live search providers, in configured order, for trusted pages.
+
+        The first provider that returns usable results wins, so a Google quota or
+        outage falls through to Tavily instead of quietly dropping the citations.
+        Nothing is returned when no provider is configured, which keeps offline
+        and test runs free of network calls.
+        """
+        configured_domains = getattr(settings, "WEB_SEARCH_ALLOWED_DOMAINS", [])
+        allowed_domains = [host for host in map(self._normalise_host, configured_domains) if host]
+        if not allowed_domains:
+            logger.warning(
+                "WEB_SEARCH_ALLOWED_DOMAINS is empty; live trusted search is disabled "
+                "because every result would be unverified."
+            )
+            return []
+
+        providers = [
+            provider.strip().lower()
+            for provider in str(getattr(settings, "WEB_SEARCH_PROVIDER", "")).split(",")
+            if provider.strip()
+        ]
+        for provider in providers:
+            if provider == "google":
+                documents = self._search_google(query, max_results, allowed_domains)
+            elif provider == "tavily":
+                documents = self._search_tavily(query, max_results, allowed_domains)
+            else:
+                logger.warning(
+                    "WEB_SEARCH_PROVIDER=%r is not supported; expected google or tavily.",
+                    provider,
+                )
+                continue
+            if documents:
+                return documents
+        return []
+
+    @staticmethod
+    def _normalise_host(value: Any) -> str:
+        """Lower-case a host or configured domain, without its www. label."""
+        host = str(value or "").strip().lower().rstrip(".")
+        return host[4:] if host.startswith("www.") else host
+
+    @classmethod
+    def _url_is_trusted(cls, url: str, allowed_domains: List[str]) -> bool:
+        """True only for the allow-listed publishers themselves and their subdomains.
+
+        A substring test would accept "who.int.evil.example", so the comparison is
+        made against the parsed hostname with a label boundary enforced.
+        """
+        hostname = cls._normalise_host(urlparse(url).hostname)
+        return bool(hostname) and any(
+            hostname == domain or hostname.endswith(f".{domain}")
+            for domain in allowed_domains
+        )
+
+    def _search_google(self, query: str, max_results: int,
+                       allowed_domains: List[str]) -> List[Dict[str, Any]]:
+        api_key = getattr(settings, "WEB_SEARCH_GOOGLE_API_KEY", "")
+        engine_id = getattr(settings, "WEB_SEARCH_GOOGLE_ENGINE_ID", "")
+        if not api_key or not engine_id:
+            # Debug, not warning: an unset provider is the normal state until the
+            # keys are pasted, and this runs on every question.
+            logger.debug(
+                "Google Programmable Search needs WEB_SEARCH_GOOGLE_API_KEY and "
+                "WEB_SEARCH_GOOGLE_ENGINE_ID; trying the next provider."
+            )
+            return []
+
+        # Google returns at most 10 results per request.
+        params = {
+            "key": api_key,
+            "cx": engine_id,
+            "q": query[:2000],
+            "num": str(min(max_results, 10)),
+        }
+        try:
+            response = requests.get(
+                getattr(settings, "WEB_SEARCH_GOOGLE_URL",
+                        "https://www.googleapis.com/customsearch/v1"),
+                params=params,
+                timeout=getattr(settings, "WEB_SEARCH_TIMEOUT", 10),
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except (requests.RequestException, ValueError, TypeError) as exc:
+            logger.warning("Google Programmable Search failed: %s", exc)
+            return []
+
+        documents = []
+        for position, result in enumerate(payload.get("items") or [], 1):
+            url = str(result.get("link") or "").strip()
+            title = str(result.get("title") or "").strip()
+            content = str(result.get("snippet") or "").strip()
+            if not url or not title or not content:
+                continue
+            # The engine's own scope is an admin setting outside this app; the
+            # allow-list is the part the assistant actually vouches for.
+            if not self._url_is_trusted(url, allowed_domains):
+                logger.info("Discarded off-list Google search result: %s", url)
+                continue
+            documents.append({
+                "id": f"web:{url}",
+                "title": title,
+                "content": content[:4000],
+                "source_id": "web_search",
+                "url": url,
+                "relevance_score": max(0.9 - 0.05 * (position - 1), 0.1),
+                "metadata": {
+                    "retrieval_method": "live_web_search",
+                    "provider": "google",
+                },
+            })
+        return documents
+
+    def _search_tavily(self, query: str, max_results: int,
+                       allowed_domains: List[str]) -> List[Dict[str, Any]]:
         api_key = getattr(settings, "WEB_SEARCH_API_KEY", "")
-        allowed_domains = getattr(settings, "WEB_SEARCH_ALLOWED_DOMAINS", [])
-        if not provider:
-            return []
-        if provider != "tavily":
-            logger.warning(
-                "WEB_SEARCH_PROVIDER=%r is not supported; live trusted search is disabled.",
-                provider,
-            )
-            return []
-        if not api_key or not allowed_domains:
-            logger.warning(
-                "Tavily web search needs WEB_SEARCH_API_KEY and "
-                "WEB_SEARCH_ALLOWED_DOMAINS; live trusted search is disabled."
-            )
+        if not api_key:
+            logger.debug("Tavily web search needs WEB_SEARCH_API_KEY; skipped.")
             return []
 
         payload = {
@@ -122,7 +225,7 @@ class RetrievalService:
             response.raise_for_status()
             results = response.json().get("results", [])
         except (requests.RequestException, ValueError, TypeError) as exc:
-            logger.warning("Live medical web search failed: %s", exc)
+            logger.warning("Tavily web search failed: %s", exc)
             return []
 
         documents = []
@@ -139,7 +242,10 @@ class RetrievalService:
                 "source_id": "web_search",
                 "url": url,
                 "relevance_score": float(result.get("score") or 0),
-                "metadata": {"retrieval_method": "live_web_search"},
+                "metadata": {
+                    "retrieval_method": "live_web_search",
+                    "provider": "tavily",
+                },
             })
         return documents
 

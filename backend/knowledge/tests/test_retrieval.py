@@ -1,6 +1,7 @@
 """Tests for evidence retrieval over the approved-source corpus."""
 
 import pytest
+import requests
 from unittest.mock import Mock
 
 from knowledge.models import KnowledgeDocument, MedicalKnowledgeSource
@@ -109,6 +110,169 @@ def test_configured_web_search_adds_cited_evidence(retrieval_service, settings, 
     results = retrieval_service.retrieve_evidence("fever", max_results=1)
 
     assert any(item["url"] == "https://www.who.int/example-fever" for item in results)
+
+
+def _google_response(*links):
+    """A Programmable Search JSON body: title, link and snippet per result."""
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"items": [
+        {
+            "title": "WHO fever guidance",
+            "link": link,
+            "snippet": "Fever can have many causes and warning signs need prompt care.",
+        }
+        for link in links
+    ]}
+    return response
+
+
+def _tavily_response():
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"results": [{
+        "title": "WHO fever advice",
+        "url": "https://www.who.int/fever-tavily",
+        "content": "Fever in an adult usually needs monitoring and fluids.",
+        "score": 0.88,
+    }]}
+    return response
+
+
+def enable_google(settings, **overrides):
+    settings.WEB_SEARCH_PROVIDER = "google"
+    settings.WEB_SEARCH_GOOGLE_API_KEY = "test-key"
+    settings.WEB_SEARCH_GOOGLE_ENGINE_ID = "test-engine"
+    settings.WEB_SEARCH_ALLOWED_DOMAINS = ["who.int"]
+    for key, value in overrides.items():
+        setattr(settings, key, value)
+
+
+def test_google_search_adds_cited_evidence(retrieval_service, settings, monkeypatch):
+    enable_google(settings)
+    monkeypatch.setattr(
+        "knowledge.services.retrieval_service.requests.get",
+        lambda *args, **kwargs: _google_response("https://www.who.int/example-fever"),
+    )
+
+    results = retrieval_service.retrieve_evidence("fever", max_results=3)
+
+    cited = [item for item in results if item["url"] == "https://www.who.int/example-fever"]
+    assert cited
+    assert cited[0]["source_name"] == "Approved medical web search"
+
+
+def test_google_search_asks_for_the_configured_engine(retrieval_service, settings, monkeypatch):
+    enable_google(settings)
+    sent = {}
+
+    def fake_get(url, params=None, **kwargs):
+        sent.update({"url": url, "params": params})
+        return _google_response()
+
+    monkeypatch.setattr("knowledge.services.retrieval_service.requests.get", fake_get)
+
+    retrieval_service._search_web("fever", max_results=25)
+
+    assert sent["url"] == "https://www.googleapis.com/customsearch/v1"
+    assert sent["params"]["cx"] == "test-engine"
+    assert sent["params"]["q"] == "fever"
+    # The JSON API refuses a page larger than 10.
+    assert sent["params"]["num"] == "10"
+
+
+def test_google_results_outside_the_trusted_domains_are_dropped(retrieval_service, settings, monkeypatch):
+    """The engine's own scope is an admin setting; the allow-list is the contract."""
+    enable_google(settings)
+    monkeypatch.setattr(
+        "knowledge.services.retrieval_service.requests.get",
+        lambda *args, **kwargs: _google_response(
+            "https://www.who.int/fever",
+            "https://apps.who.int/fever",
+            "https://moh.gov.rw/fever",
+            # A trusted domain used as a prefix, or buried in a query string, is
+            # not that domain and must never be shown as approved medical evidence.
+            "https://who.int.evil.example/fever",
+            "https://evil.example/?redirect=https://who.int",
+            "not a url",
+        ),
+    )
+
+    found = retrieval_service._search_web("fever", max_results=8)
+
+    assert [item["url"] for item in found] == [
+        "https://www.who.int/fever",
+        "https://apps.who.int/fever",
+    ]
+
+
+def test_a_trusted_domain_written_with_www_or_caps_still_matches(
+    retrieval_service, settings, monkeypatch
+):
+    """Otherwise an admin typing www.who.int silently loses every live citation."""
+    enable_google(settings, WEB_SEARCH_ALLOWED_DOMAINS=["www.WHO.int"])
+    monkeypatch.setattr(
+        "knowledge.services.retrieval_service.requests.get",
+        lambda *args, **kwargs: _google_response("https://www.who.int/fever"),
+    )
+
+    found = retrieval_service._search_web("fever", max_results=5)
+
+    assert [item["url"] for item in found] == ["https://www.who.int/fever"]
+
+
+def test_google_search_failure_falls_back_to_the_next_provider(
+    retrieval_service, settings, monkeypatch
+):
+    enable_google(settings, WEB_SEARCH_PROVIDER="google,tavily")
+    settings.WEB_SEARCH_API_KEY = "test-key"
+
+    def quota_exceeded(*args, **kwargs):
+        raise requests.ConnectionError("quota exceeded")
+
+    monkeypatch.setattr("knowledge.services.retrieval_service.requests.get", quota_exceeded)
+    monkeypatch.setattr(
+        "knowledge.services.retrieval_service.requests.post",
+        lambda *args, **kwargs: _tavily_response(),
+    )
+
+    results = retrieval_service._search_web("fever", max_results=3)
+
+    assert [item["url"] for item in results] == ["https://www.who.int/fever-tavily"]
+
+
+def test_an_unconfigured_google_provider_is_skipped_without_a_call(
+    retrieval_service, settings, monkeypatch
+):
+    """Pasting a Tavily key alone must still work, with no Google request attempted."""
+    settings.WEB_SEARCH_PROVIDER = "google,tavily"
+    settings.WEB_SEARCH_API_KEY = "test-key"
+    settings.WEB_SEARCH_ALLOWED_DOMAINS = ["who.int"]
+
+    def must_not_be_called(*args, **kwargs):
+        raise AssertionError("Google search ran without its key and engine ID")
+
+    monkeypatch.setattr("knowledge.services.retrieval_service.requests.get", must_not_be_called)
+    monkeypatch.setattr(
+        "knowledge.services.retrieval_service.requests.post",
+        lambda *args, **kwargs: _tavily_response(),
+    )
+
+    found = retrieval_service._search_web("fever", max_results=3)
+
+    assert [item["url"] for item in found] == ["https://www.who.int/fever-tavily"]
+
+
+def test_no_configured_provider_means_no_network_call(retrieval_service, settings, monkeypatch):
+    settings.WEB_SEARCH_PROVIDER = ""
+
+    def must_not_be_called(*args, **kwargs):
+        raise AssertionError("a search request left the process without a configured provider")
+
+    monkeypatch.setattr("knowledge.services.retrieval_service.requests.get", must_not_be_called)
+    monkeypatch.setattr("knowledge.services.retrieval_service.requests.post", must_not_be_called)
+
+    assert retrieval_service._search_web("fever", max_results=3) == []
 
 
 def test_kinyarwanda_query_retrieves_english_evidence(retrieval_service):

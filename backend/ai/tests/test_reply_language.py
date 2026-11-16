@@ -47,6 +47,24 @@ class TestPatientReplyLanguage:
         AIService().converse("Ndababara mu nda kuva amasaha abiri")
         assert "writing in Kinyarwanda" in system_prompt_of(provider)
 
+    def test_english_message_with_a_kinyarwanda_symptom_word_replies_in_english(self, provider):
+        """Measured live: a mostly-English question returned a Kinyarwanda answer."""
+        AIService().converse("I have umuriro and headache, can I take paracetamol?")
+
+        prompt = system_prompt_of(provider)
+        assert "writing in English" in prompt
+        assert "writing in Kinyarwanda" not in prompt
+
+    def test_follow_up_conversation_gets_follow_up_instructions(self, provider):
+        """Live: a short follow-up repeated the whole opening assessment."""
+        history = [
+            {"role": "user", "content": "I have a runny nose and sneeze every morning."},
+            {"role": "assistant", "content": "This looks like allergic rhinitis."},
+        ]
+        AIService().converse("Should I take antibiotics for it?", history=history)
+
+        assert "FOLLOW-UP TURN" in system_prompt_of(provider)
+
     def test_kinyarwanda_question_nakoresha_iki_detected_as_kinyarwanda(self, provider):
         AIService().converse("nakoresha iki ngo bigabanuke?")
         assert "writing in Kinyarwanda" in system_prompt_of(provider)

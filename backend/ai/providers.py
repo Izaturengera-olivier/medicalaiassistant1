@@ -16,10 +16,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
 # A free-tier Groq key allows ~8000 tokens per minute and one detailed answer costs
-# 6k-7k, so a 429 is what two simultaneous questions look like rather than a rare
-# outage. Waiting out a short window beats the plain-text fallback for the patient,
-# but a long window must not stall the chat.
-RATE_LIMIT_MAX_WAIT = 25.0
+# 6k-7k, so a 429 is what a second question in the same minute looks like rather
+# than a rare outage. Groq's own hint for that case is ~39s, so the cap must sit
+# above it: waiting one window and answering beats handing the patient a template.
+# 45s still leaves gunicorn's 120s request timeout plenty of room.
+RATE_LIMIT_MAX_WAIT = 45.0
 RATE_LIMIT_DEFAULT_WAIT = 8.0
 
 # Reasoning models (openai/gpt-oss-20b on Groq) spend much of the completion on
@@ -235,7 +236,7 @@ PROVIDER_DEFAULTS = {
     },
     "groq": {
         "base_url": "https://api.groq.com/openai/v1",
-        "model": "llama-3.3-70b-versatile",
+        "model": "openai/gpt-oss-20b",
     },
 }
 

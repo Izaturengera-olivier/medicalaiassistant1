@@ -7,7 +7,9 @@ from django.conf import settings
 
 from core.constants import UrgencyLevel
 from core.exceptions import AIServiceError, AIResponseTruncatedError
+from core.glossary import requests_english, requests_kinyarwanda
 from knowledge.services import RetrievalService
+from knowledge.services import facility_service
 
 from ..providers import get_llm_provider
 from .prompts import (
@@ -17,6 +19,17 @@ from .prompts import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Kinyarwanda word for each facility type, so a list of places reads in the
+# language the patient asked in rather than in dataset vocabulary.
+FACILITY_TYPE_LABELS_RW = {
+    "hospital": "Ibitaro",
+    "health_center": "Ivuriro",
+    "health_post": "Ivuriro rito",
+    "clinic": "Kliniki",
+    "pharmacy": "Farumasi",
+    "other": "Ahantu ho kuvurirwa",
+}
 
 CONVERSATION_SCHEMA = {
     "reply": (
@@ -115,7 +128,7 @@ _KINYARWANDA_KEYWORDS = {
     "nagize", "inkorora", "kuva", "minsi", "naranze", "nshobora",
     "ndwaye", "ariko", "muraho", "mwiriwe", "murakoze", "mwaramutse", "byihuse",
     "nubwo", "ndabona", "nahuye", "nka", "mugongo", "mbabara", "ndababara",
-    "nda", "naniwe", "kinyarwanda", "rwanda", "ikibazo", "inyandiko", "ubuzima",
+    "nda", "naniwe", "kinyarwanda", "ikibazo", "inyandiko", "ubuzima",
     "uburyo", "umwana", "indwara", "imiti", "umuganga", "farumasi", "kuruka",
     "impiswi", "gucibwamo", "kuribwa", "isukari", "umuvuduko", "igifu", "akaga",
     "amaraso", "amasaha", "ibyumweru", "ejo", "nza", "ndashaka",
@@ -124,7 +137,22 @@ _KINYARWANDA_KEYWORDS = {
     "amatsiko", "gute", "ryari", "he", "se", "yego", "oya", "ubwo", "hafi",
     "wanjye", "yawe", "yacu", "yanyu", "wacu", "wanyu", "cyanjye", "byanjye",
     "ufite", "bafite", "gufata", "wafashe", "bafashe", "umuti", "kwivuza",
-    "gukira", "kwitonda", "ibipimo", "isuka", "ikizagabanya"
+    "gukira", "kwitonda", "ibipimo", "isuka", "ikizagabanya",
+    "ivuriro", "vuriro", "ibitaro", "irihe", "rinyegereye", "amavuriro",
+    "kugisha", "inama", "sobanura", "bimenyetso", "mwaba", "mufite", "bwanyu",
+    "mwisuzumishe", "kumenya", "gutitira", "kubyimba", "kuzungerwa",
+    "ikizunguzungu", "guhumeka", "kubura", "umwuka", "ibiheri", "uburuka",
+    "akanyabugingo", "ubuzima", "igituntu", "umusonga", "asima", "malariya",
+    "mituweli", "mutuelle", "urupapuro", "kohereza", "icyitegererezo"
+}
+
+_KINYARWANDA_PARTICLES = {
+    "iki", "ngo", "nte", "nza", "nki", "ryari", "gute", "he", "se", "yego", "oya",
+    "kuri", "muri", "mbigenze", "nakoresha", "nakora", "bigabanuke", "kuba", "bita",
+    "hafi", "mu", "ku", "cya", "bya", "za", "wa", "ya", "ra", "wanjye", "yawe",
+    "yacu", "yanyu", "wacu", "wanyu", "cyanjye", "byanjye", "ufite", "bafite",
+    "ndetse", "cyangwa", "ariko", "kuko", "nuko", "niba", "ubwo", "kugira",
+    "mwebwe", "bose", "twese", "muri", "mwe"
 }
 
 
@@ -132,11 +160,18 @@ class AIService:
     """Service for AI-powered medical conversations and assessments."""
 
     MAX_HISTORY_MESSAGES = 20
-    # 8 ranked passages rather than 6: the approved corpus is only 38 documents of
-    # 241-995 characters each (measured), so a 6-passage window routinely left the
-    # model with ~1.5 passages that actually matched the question. Retrieval caps
-    # the prompt at roughly 8 x 995 chars of content, which is affordable.
+    # 8 ranked passages: the approved corpus is only 38 documents of 241-995
+    # characters each, so fewer passages left the model with almost nothing that
+    # matched the question. Grounding now answers uncovered topics from general
+    # clinical knowledge, so the passages that do not fit are no longer forced into
+    # the reply. Eight short passages plus the trimmed prompt stay inside a
+    # free-tier Groq budget (~8000 tokens per minute).
     MAX_EVIDENCE_RESULTS = 8
+    # Retrieval scores a passage 2 for a title-word match, 1 for a single word
+    # anywhere in the body. Asked "which are the major hospitals in Rwanda", it
+    # returned the Malaria page at exactly 1 — and the offline fallback printed it
+    # as "Health information relevant to what you described".
+    MIN_PRESENTED_RELEVANCE = 2
 
     def __init__(self):
         self.provider_name = settings.AI_PROVIDER
@@ -152,6 +187,8 @@ class AIService:
         history: Optional[List[Dict[str, str]]] = None,
         patient_history: Optional[Dict] = None,
         current_medications: Optional[List[str]] = None,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Continue a conversation with a patient.
@@ -176,6 +213,11 @@ class AIService:
             return self._greeting_result(language)
         if self._is_incomplete_message(message):
             return self._clarification_result(language)
+        facility_answer = self._facility_result(
+            message, sanitized_history, latitude, longitude
+        )
+        if facility_answer is not None:
+            return facility_answer
 
         query = self._build_query(sanitized_history, message)
         evidence = self._retrieve_evidence(query)
@@ -206,12 +248,14 @@ class AIService:
                 exc,
             )
             return self._mock_conversation(
-                message, sanitized_history, patient_history, current_medications, evidence
+                message, sanitized_history, patient_history, current_medications, evidence,
+                fallback_reason=str(exc),
             )
         except AIServiceError as exc:
             logger.warning("LLM provider failed, using fallback conversation: %s", exc)
             return self._mock_conversation(
-                message, sanitized_history, patient_history, current_medications, evidence
+                message, sanitized_history, patient_history, current_medications, evidence,
+                fallback_reason=str(exc),
             )
 
     def converse_professional(
@@ -219,6 +263,8 @@ class AIService:
         message: str,
         history: Optional[List[Dict[str, str]]] = None,
         professional_context: Optional[Dict] = None,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Continue a decision-support conversation with a clinician.
@@ -240,6 +286,11 @@ class AIService:
         language = self._detect_language(message, sanitized_history)
         if self._is_general_greeting(message):
             return self._greeting_result(language, professional=True)
+        facility_answer = self._facility_result(
+            message, sanitized_history, latitude, longitude
+        )
+        if facility_answer is not None:
+            return facility_answer
 
         query = self._build_query(sanitized_history, message)
         evidence = self._retrieve_evidence(query)
@@ -606,7 +657,7 @@ class AIService:
         sources = self._evidence_sources(evidence)
         study_title = exam_type or "Medical Diagnostic Study"
 
-        if language == "rw":
+        if language in ("rw", "mixed"):
             reply = (
                 f"Isesengura ry'inyandiko y'ibipimo bya muganga: {study_title}.\n\n"
                 f"Ibipimo byagaragaye: {len(findings)} byasuzumwe. "
@@ -726,6 +777,12 @@ class AIService:
             query = f"{query} {' '.join(recognized_symptoms)}"
         return query[:2000]
 
+    @staticmethod
+    def _topic_text(history: List[Dict[str, str]], message: str) -> str:
+        """Wording that scopes the terminology map to this conversation."""
+        user_turns = [turn["content"] for turn in history if turn["role"] == "user"][-2:]
+        return " ".join(user_turns + [message])
+
     def _sanitize_history(
         self, history: Optional[List[Dict[str, str]]]
     ) -> List[Dict[str, str]]:
@@ -758,6 +815,8 @@ class AIService:
             evidence_block=self.retrieval_service.format_evidence_for_ai(evidence),
             patient_context=patient_context or None,
             language=language,
+            topic_text=self._topic_text(history, message),
+            is_followup=bool(history),
         )
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
@@ -776,6 +835,7 @@ class AIService:
             evidence_block=self.retrieval_service.format_evidence_for_ai(evidence),
             professional_context=professional_context or None,
             language=language,
+            topic_text=self._topic_text(history, message),
         )
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
@@ -835,6 +895,11 @@ class AIService:
             "evidence": evidence,
         }
 
+    @classmethod
+    def _presents_as_relevant(cls, item: Dict[str, Any]) -> bool:
+        score = item.get("relevance_score")
+        return score is None or float(score) >= cls.MIN_PRESENTED_RELEVANCE
+
     def _mock_conversation(
         self,
         message: str,
@@ -842,8 +907,15 @@ class AIService:
         patient_history: Optional[Dict],
         current_medications: Optional[List[str]],
         evidence: List[Dict[str, Any]],
+        fallback_reason: str = "",
     ) -> Dict[str, Any]:
-        """Deterministic conversational reply used without an LLM provider."""
+        """Deterministic conversational reply used without an LLM provider.
+
+        ``fallback_reason`` is set when a configured provider was tried and failed
+        (rate limit, outage, truncation). In that case the reply says the assistant
+        is briefly unavailable instead of presenting loosely-matched passages as a
+        clinical answer, which reads to the patient as an irrelevant answer.
+        """
         patient_text = " ".join(
             [turn["content"] for turn in history if turn["role"] == "user"] + [message]
         )
@@ -854,22 +926,72 @@ class AIService:
 
         current_symptoms = self._extract_symptoms_from_text(message)
         symptoms = current_symptoms or self._extract_symptoms_from_text(patient_text)
-        follow_up_questions = [
-            question
-            for question in (
-                self._mock_follow_up_questions(symptoms, language)
-                + self._mock_secondary_questions(symptoms, language)
+        is_asking_referral = any(
+            p in patient_text.lower()
+            for p in (
+                "referral hospital", "refferal hospital", "which referral", "which refferal",
+                "what referral", "what refferal", "is there a referral", "are there referral",
+                "referral hospital in", "refferal hospital in", "referral", "refferal",
+                "icyitegererezo", "icyitegerezo", "kwohererezwa", "kwoherezwa",
+                "ibitaro by'icyitegererezo", "ibitaro byicyitegererezo",
+                "ibitaro by'intara", "ibitaro byintara", "transfer letter",
             )
-            if not any(question in text for text in previously_asked)
-        ][:3]
+        )
+        is_asking_emergency = any(
+            phrase in patient_text.lower()
+            for phrase in (
+                "which symptoms mean", "go to a hospital", "must go to hospital",
+                "emergency symptoms", "when to go to hospital", "red flags",
+                "warning signs", "kugana ibitaro", "ibimenyetso by'akaga"
+            )
+        )
+        if is_asking_referral and not symptoms:
+            if language in ("rw", "mixed"):
+                follow_up_questions = [
+                    "Ni iyihe serivisi y'ubuvuzi yihariye mukeneye (urugero: kubaga, kubyara, ubuvuzi bw'abana)?",
+                    "Ese mufite urupapuro rwo koherezwa (transfer sheet) rwavuye ku kigo nderabuzima?",
+                    "Ni ubuhe bwishingizi bw'ubuvuzi mukoresha (Mutuelle de Sante / CBHI, RAMA, MMI)?",
+                ]
+            else:
+                follow_up_questions = [
+                    "What medical specialty or service are you seeking (e.g., surgery, maternity, pediatrics, internal medicine)?",
+                    "Do you already have a transfer letter (urupapuro rwo kohereza) from your local health center?",
+                    "Which health insurance will you be using (such as Mutuelle de Sante / CBHI, RSSB / RAMA, or private)?",
+                ]
+        elif is_asking_emergency and not symptoms:
+            if language in ("rw", "mixed"):
+                follow_up_questions = [
+                    "Ese mwaba cyangwa undi muntu muri kumwe murimo kugaragaza kimwe muri ibi bimenyetso by'akaga?",
+                    "Ese mufite uburyo bwo kwihutira kugana ibitaro bibegereye cyangwa guhamagara ambulance (112/912)?",
+                    "Ni ibihe bimenyetso byihariye bibahangayikishije muri uyu mwanya?",
+                ]
+            else:
+                follow_up_questions = [
+                    "Are you or someone with you currently experiencing any of these red-flag symptoms right now?",
+                    "Do you have immediate transport to reach an emergency hospital or need emergency services (112 / 912 in Rwanda)?",
+                    "Which specific symptoms are you most concerned about right now?",
+                ]
+        else:
+            follow_up_questions = [
+                question
+                for question in (
+                    self._mock_follow_up_questions(symptoms, language)
+                    + self._mock_secondary_questions(symptoms, language)
+                )
+                if not any(question in text for text in previously_asked)
+            ][:3]
         urgency_level = self._determine_urgency(patient_text, symptoms)
         warning_signs = self._check_warning_signs(patient_text, symptoms)
         urgency_level = self._enforce_urgency_floor(urgency_level, warning_signs)
-        general_information = self._generate_general_information(symptoms, language)
+        if fallback_reason:
+            return self._provider_busy_result(
+                language, symptoms, warning_signs, urgency_level
+            )
+        general_information = self._generate_general_information(symptoms, language, patient_text=patient_text)
 
         lines = []
         if warning_signs:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 lines.append(
                     "Ibimenyetso by'akaga byavuzwe bisaba isuzuma ryihuse ry'ubuvuzi: "
                     + ", ".join(warning_signs)
@@ -882,30 +1004,43 @@ class AIService:
                     + "."
                 )
         if symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 lines.append("Murakoze — nabonye ibimenyetso mwambwiye: " + ", ".join(symptoms) + ".")
             else:
                 lines.append("Thanks — I've noted: " + ", ".join(symptoms) + ".")
+        elif is_asking_referral:
+            if language in ("rw", "mixed"):
+                lines.append("Dore amakuru yerekeye ibitaro n'uburyo bwo kwakira no kohereza abarwayi (referral system) mu Rwanda:")
+            else:
+                lines.append("Here is information on hospitals and the healthcare referral system in Rwanda:")
+        elif is_asking_emergency:
+            if language in ("rw", "mixed"):
+                lines.append("Dore ibimenyetso by'akaga bisaba kwihutira kugana ibitaro ako kanya bitarenze uyu munsi:")
+            else:
+                lines.append("Here are critical red-flag emergency symptoms that require same-day hospital evaluation:")
         else:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 lines.append("Murakoze kudusangiza aya makuru.")
             else:
                 lines.append("Thanks for sharing that.")
 
         evidence_lines = []
-        for index, item in enumerate(evidence[:3], 1):
+        for index, item in enumerate(evidence, 1):
+            # Keep the position-derived marker: sources[n-1] must still resolve.
+            if not self._presents_as_relevant(item) or len(evidence_lines) == 3:
+                continue
             snippet = (item.get("content") or "").strip().split(".")[0][:180]
             evidence_lines.append(f"[{index}] {item.get('title')}: {snippet}.")
         if evidence_lines:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 lines.append("Amakuru y'ubuzima bijyanye n'ibyo mugaragaza:\n" + "\n".join(evidence_lines))
             else:
                 lines.append("Health information relevant to what you described:\n" + "\n".join(evidence_lines))
         else:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 lines.append(
                     "Ntabwo mfite amakuru ahagije yo gusobanura iki kibazo neza. "
-                    "Umuganga mubasha gusuzumwa ni we wbasha kubibabwira."
+                    "Umuganga ubasha kubasuzuma ni we wabasha kubaha ibisobanuro byimbitse."
                 )
             else:
                 lines.append(
@@ -916,14 +1051,37 @@ class AIService:
         if general_information:
             lines.append(general_information)
         if follow_up_questions:
-            prefix = "Kugira ngo mbashe kumva neza amakuru y'ubuzima bwanyu:\n" if language == "rw" else "To help me understand better:\n"
+            prefix = "Kugira ngo mbashe kumva neza amakuru y'ubuzima bwanyu:\n" if language in ("rw", "mixed") else "To help me understand better:\n"
             lines.append(
                 prefix + "\n".join(
                     f"{index}. {question}"
                     for index, question in enumerate(follow_up_questions, 1)
                 )
             )
-        recommendation = self._generate_recommendation(urgency_level, language)
+        if is_asking_referral and not symptoms:
+            if language in ("rw", "mixed"):
+                recommendation = (
+                    "Niba ari ikibazo cyihutirwa cyane (emergency), mugane ibitaro bibegereye ako kanya. "
+                    "Niba ari ubuvuzi busanzwe, mubanze munyure ku kigo nderabuzima cyo mu murenge wanyu kugira ngo baguhe urupapuro rwo koherezwa rwizewe n'ubwishingizi."
+                )
+            else:
+                recommendation = (
+                    "For urgent emergencies, go directly to the nearest hospital emergency department without waiting for a transfer letter. "
+                    "For scheduled or specialized consultations, visit your local health center first to obtain an official referral form to ensure full insurance coverage."
+                )
+        elif is_asking_emergency and not symptoms:
+            if language in ("rw", "mixed"):
+                recommendation = (
+                    "Niba mwaba cyangwa undi muntu muri kumwe mufite kimwe muri ibi bimenyetso by'akaga, "
+                    "hamagara 112 cyangwa 912 ako kanya, cyangwa mugane ku bitaro bibegereye bitarenze uyu munsi."
+                )
+            else:
+                recommendation = (
+                    "If you or someone around you is actively experiencing any of these critical red flags, "
+                    "call emergency services (112 or 912 in Rwanda) or proceed immediately to the nearest hospital emergency department today without delay."
+                )
+        else:
+            recommendation = self._generate_recommendation(urgency_level, language)
         lines.append(recommendation)
 
         return {
@@ -961,11 +1119,13 @@ class AIService:
         language = self._detect_language(message, history)
 
         evidence_lines = []
-        for index, item in enumerate(evidence[:4], 1):
+        for index, item in enumerate(evidence, 1):
+            if not self._presents_as_relevant(item) or len(evidence_lines) == 4:
+                continue
             snippet = (item.get("content") or "").strip().split(".")[0][:220]
             evidence_lines.append(f"[{index}] {item.get('title')}: {snippet}.")
 
-        rw = language == "rw"
+        rw = language in ("rw", "mixed")
         lines = []
         if evidence_lines:
             lines.append(
@@ -1076,47 +1236,96 @@ class AIService:
             return 0.5
 
     def _detect_language(self, text: str, history: Optional[List[Dict[str, str]]] = None) -> str:
-        """Return the conversation language using exact token matching and history."""
-        lowered = (text or "").lower()
-        words = [w.strip("?,.!;:\"'()") for w in lowered.split()]
-        
-        # 1. Exact word match against Kinyarwanda vocabulary
-        if any(word in _KINYARWANDA_KEYWORDS for word in words):
-            return "rw"
-            
-        # 2. Check individual words against question particles and agglutinative prefixes
-        kinyarwanda_particles = {
-            "iki", "ngo", "nte", "nza", "nki", "ryari", "gute", "he", "se", "yego", "oya",
-            "kuri", "muri", "mbigenze", "nakoresha", "nakora", "bigabanuke", "kuba", "bita",
-            "hafi", "mu", "ku", "cya", "bya", "za", "wa", "ya", "ra", "wanjye", "yawe",
-            "yacu", "yanyu", "wacu", "wanyu", "cyanjye", "byanjye", "ufite", "bafite"
-        }
-        for word in words:
-            if word in kinyarwanda_particles:
-                return "rw"
-            if len(word) >= 4 and word.startswith((
-                "nd", "rw", "nsh", "bw", "cy", "ny", "kw", "gw", "tuk", "mub",
-                "nak", "bik", "big", "bim", "bir", "bak", "bag", "bam", "bar",
-                "tug", "tuk", "tur", "kug", "kur", "gug", "gur", "ura", "ira", "bira"
-            )) and not self._is_english_word(word):
-                return "rw"
+        """
+        Return the conversation language ('rw', 'en', or 'mixed') using intent analysis,
+        vocabulary matching, morphology, and dialogue history.
+        """
+        clean_text = (text or "").strip()
+        if not clean_text:
+            return "en"
 
-        if any(ch in lowered for ch in ("é", "è", "ô", "î", "à", "ù", "ê")):
+        # 1. Check explicit language requests
+        if requests_kinyarwanda(clean_text):
+            return "rw"
+        if requests_english(clean_text):
+            return "en"
+
+        tokens = [w.strip("?,.!;:\"'()[]{}/*#") for w in clean_text.split()]
+        words = [token.lower() for token in tokens if token]
+        if not words:
+            return "en"
+
+        rw_score = 0.0
+        en_score = 0.0
+
+        for position, word in enumerate(words):
+            # Exact match against Kinyarwanda vocabulary
+            if word in _KINYARWANDA_KEYWORDS:
+                rw_score += 2.0
+                continue
+
+            # Particles and conjunctions
+            if word in _KINYARWANDA_PARTICLES:
+                rw_score += 1.5
+                continue
+
+            # Contractions: n'umuriro, k'umutwe, bw'ubuzima, cy'ubuvuzi, by'akaga
+            if "'" in word or "’" in word:
+                norm_word = word.replace("’", "'")
+                if any(norm_word.startswith(p) for p in ("n'", "k'", "bw'", "ry'", "cy'", "by'", "mw'")):
+                    rw_score += 2.0
+                    continue
+
+            # Check agglutinative verbal/nominal prefixes
+            named = position > 0 and tokens[position][:1].isupper()
+            if (
+                len(word) >= 4
+                and not named
+                and word.startswith((
+                    "nd", "rw", "nsh", "bw", "cy", "ny", "kw", "gw", "tuk", "mub",
+                    "nak", "bik", "big", "bim", "bir", "bak", "bag", "bam", "bar",
+                    "tug", "tuk", "tur", "kug", "kur", "gug", "gur", "ura", "ira", "bira",
+                    "mur", "mwa", "bwa", "ntab", "sind", "simf"
+                ))
+                and not self._is_english_word(word)
+            ):
+                rw_score += 1.5
+                continue
+
+            if self._is_english_word(word):
+                en_score += 1.0
+
+        # Code-switching detection (mixed Kinyarwanda & English)
+        if rw_score >= 2.0 and en_score >= 2.0:
+            # A mostly-English sentence that borrows one Kinyarwanda symptom word
+            # ("I have umuriro and headache") is still an English question; the
+            # patient should not receive an answer in a language they did not use.
+            if en_score >= 2.0 * rw_score:
+                return "en"
+            return "mixed"
+
+        if rw_score > 0 and rw_score >= en_score:
             return "rw"
 
-        # 3. Check recent history if current message is ambiguous
+        if en_score > rw_score and rw_score == 0:
+            return "en"
+
+        # Check recent conversation history if current turn is ambiguous
         if history:
             for turn in reversed(history):
                 if isinstance(turn, dict) and turn.get("role") == "user":
-                    turn_words = [w.strip("?,.!;:\"'()") for w in (turn.get("content") or "").lower().split()]
-                    if any(word in _KINYARWANDA_KEYWORDS for word in turn_words):
+                    turn_content = (turn.get("content") or "").strip()
+                    if requests_kinyarwanda(turn_content):
+                        return "rw"
+                    turn_words = [w.strip("?,.!;:\"'()[]{}") for w in turn_content.lower().split() if w]
+                    if any(w in _KINYARWANDA_KEYWORDS or w in _KINYARWANDA_PARTICLES for w in turn_words):
                         return "rw"
 
-        return "en"
+        return "rw" if rw_score > 0 else "en"
 
     @staticmethod
     def _is_english_word(word: str) -> bool:
-        """Filter out common English words to prevent false prefix matches."""
+        """Filter out common English words to detect English content and prevent false prefix matches."""
         english_words = {
             "the", "and", "for", "you", "can", "what", "how", "have", "with", "from",
             "that", "this", "will", "should", "would", "does", "are", "were", "was",
@@ -1124,7 +1333,18 @@ class AIService:
             "his", "her", "our", "their", "it", "its", "turn", "take", "make", "cure",
             "care", "burn", "back", "sick", "pain", "head", "cough", "drug", "doctor",
             "hello", "hi", "hey", "good", "morning", "afternoon", "evening", "risk",
-            "interaction", "metronidazole", "warfarin", "clinical", "assistant"
+            "interaction", "metronidazole", "warfarin", "clinical", "assistant",
+            "rwanda", "rwandan", "rwandas", "hospital", "hospitals", "health", "center",
+            "centers", "unfamiliar", "nearest", "emergency", "service", "medical",
+            "feel", "severe", "headache", "fever", "diarrhea", "vomiting", "chest",
+            "stomach", "shortness", "breath", "dizzy", "dizziness", "chills", "bleed",
+            "bleeding", "child", "baby", "infant", "since", "yesterday", "today",
+            "help", "please", "advise", "recommend", "need", "problem", "tell",
+            "explain", "about", "which", "where", "when", "why", "who", "could",
+            "is", "am", "had", "has", "do", "did", "say", "said", "taking", "medicine",
+            "pill", "syrup", "tablet", "infection", "disease", "treatment", "clinic",
+            "pharmacy", "patient", "days", "hours", "night", "morning", "experienced",
+            "experiencing", "started", "suffering", "under", "over", "high", "low"
         }
         return word.lower() in english_words
 
@@ -1152,8 +1372,279 @@ class AIService:
         normalized = " ".join((text or "").split())
         return len(normalized) < 3
 
+    FACILITY_ANSWER_LIMIT = 6
+
+    # What to call the area the search settled on, beside the word the patient used.
+    FACILITY_AREA_LABELS = {
+        "sector": (" (mu murenge wa {name})", " ({name} Sector)"),
+        "district": (" (mu karere ka {name})", " ({name} District)"),
+        "province": (" (mu ntara ya {name})", " ({name})"),
+    }
+
+    def _facility_area(self, found, rw: bool) -> str:
+        if not found.place:
+            return ""
+        labels = self.FACILITY_AREA_LABELS.get(found.place_level or "")
+        if not labels:
+            # More than one area was searched, which happens when the name belongs
+            # to two places and the message does not say which: say so plainly.
+            return " (hashakishijwe muri {})".format(found.place) if rw else f" (searched in {found.place})"
+        return (labels[0] if rw else labels[1]).format(name=found.place)
+
+    def _facility_result(
+        self,
+        message: str,
+        history: List[Dict[str, str]],
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Answer "where do I get care" from the facility table, not from the model.
+
+        Which hospitals exist near a district is a fact, not something a model
+        should recall, and this path uses no tokens, so a rate-limited provider
+        cannot turn it into boilerplate. Returns None for anything that is not a
+        place question with a place to anchor it to.
+        """
+        if not facility_service.mentions_facility(message):
+            # Deciding that needs no database: a message about symptoms has no
+            # business reading the place hierarchy and the facility table.
+            return None
+        # Only answer from the facility directory if the question is genuinely asking
+        # where/how to find a facility, or is a nearby follow-up to a previous facility query.
+        is_fac_q = facility_service.is_facility_question(message)
+        if not is_fac_q:
+            combined = self._build_query(history, message)
+            if not (facility_service.asks_for_nearby(message) and facility_service.is_facility_question(combined)):
+                return None
+
+        # Contextual place resolution: when a patient refers to "this district",
+        # "that sector", "there", etc., carry the place from earlier turns so
+        # device GPS coordinates do not clobber the user's intended location.
+        search_message = message
+        has_demonstrative = any(
+            d in message.lower()
+            for d in (
+                "this district", "that district", "this sector", "that sector",
+                "this area", "that area", "in this", "in that", "there", "here",
+                "aka karere", "uyu murenge", "aho ngaho", "muri aka",
+            )
+        )
+        if has_demonstrative or not facility_service.resolve_places(message):
+            for turn in reversed(history or []):
+                content = turn.get("content") or ""
+                places = facility_service.resolve_places(content)
+                if places:
+                    search_message = f"{message} {' '.join(p.name for p in places)}"
+                    break
+
+        found = facility_service.search(
+            search_message, latitude, longitude, limit=self.FACILITY_ANSWER_LIMIT
+        )
+        if not found.has_results and facility_service.is_facility_question(message):
+            # "and the closest one?" carries its place from an earlier turn.
+            found = facility_service.search(
+                self._build_query(history, message),
+                latitude,
+                longitude,
+                limit=self.FACILITY_ANSWER_LIMIT,
+            )
+        if not found.has_results:
+            if not found.anchored and facility_service.asks_for_nearby(message):
+                # "which hospital is near me" with no place and no location sent is
+                # not a question to hand to the model: it answered one with
+                # vaccination text. The missing fact is where the patient is.
+                return self._need_location_result(message, history)
+            return None
+
+        rw = self._detect_language(message, history) == "rw"
+        lines = []
+        sources = []
+        for index, row in enumerate(found.results, 1):
+            label = FACILITY_TYPE_LABELS_RW.get(row["type"], row["type_display"]) if rw else row["type_display"]
+            location = ", ".join(bit for bit in (row["sector"], row["district"]) if bit)
+            details = ", ".join(
+                bit
+                for bit in (
+                    label,
+                    location,
+                    f"{row['distance_km']} km" if row["distance_km"] is not None else "",
+                )
+                if bit
+            )
+            lines.append(f"- {row['name']} ({details}) [{index}]")
+            sources.append(
+                {"index": index, "name": row["name"], "title": row["name"], "url": row["maps_url"]}
+            )
+
+        if found.locality:
+            # The patient named a cell or village; the list is the area around it.
+            # Say both: someone in Nyabugogo scanning for "Gasabo" is not helped by
+            # either word alone, and a widened search should be visible.
+            area = self._facility_area(found, rw)
+            intro = (
+                f"Ahantu ho kuvurirwa hafi ya {found.locality}{area}:"
+                if rw
+                else f"Care facilities near {found.locality}{area}:"
+            )
+        elif found.place:
+            intro = (
+                f"Amavuriro n'ibitaro biri i {found.place}:"
+                if rw
+                else f"Care facilities in {found.place}:"
+            )
+        else:
+            intro = (
+                "Ahantu ho kuvurirwa hafi yanyu:"
+                if rw
+                else "The facilities closest to you:"
+            )
+        closing = (
+            "Kanda kuri nomero kugira ngo ubone inzira yaho."
+            if rw
+            else "Select a number to open directions to any of them."
+        )
+        next_step = closing
+        if found.locality and not found.coordinates:
+            # The neighbourhood was resolved to the district holding it, so the
+            # list is that district's, not ordered by distance: say what would.
+            next_step = (
+                "Nyamuneka wohereze location yawe kugira ngo dutangire n'iriri hafi kurusha ayandi."
+                if rw
+                else "Share your location and I will put the closest one first."
+            )
+
+        symptoms = self._extract_symptoms_from_text(message)
+        warning_signs = self._check_warning_signs(message, symptoms)
+        urgency_level = self._enforce_urgency_floor(
+            self._determine_urgency(message, symptoms), warning_signs
+        )
+        if warning_signs:
+            intro = (
+                "Ibi bimenyetso bisaba kwa muganga ako kanya: " + ", ".join(warning_signs)
+                if rw
+                else "These symptoms need emergency care now: " + ", ".join(warning_signs)
+            ) + "\n\n" + intro
+
+        return {
+            "reply": intro + "\n\n" + "\n".join(lines) + "\n\n" + closing,
+            "symptoms_identified": symptoms,
+            "follow_up_questions": [],
+            "possible_conditions": [],
+            "warning_signs": warning_signs,
+            "urgency_level": urgency_level,
+            "general_information": "",
+            "medication_information": [],
+            "recommended_next_step": next_step,
+            "sources": sources,
+            "model_used": "health_facility_directory",
+            "confidence": 1.0,
+            "evidence": [],
+        }
+
+    def _need_location_result(
+        self, message: str, history: List[Dict[str, str]]
+    ) -> Dict[str, Any]:
+        """Ask for the one fact a "near me" answer needs, and keep any triage."""
+        rw = self._detect_language(message, history) == "rw"
+        if rw:
+            reply = (
+                "Kugira ngo mbabonere aho mwakurira ubuvuzi hafi yanyu, mbwira aho uri: "
+                "umurenge cyangwa akagari utuyemo. Niba mubibasha, nimwohereze ahantu "
+                "muri (location) maze tukabereka ivuriro riri hafi kurusha ahandi."
+            )
+            follow_up = "Utuye mu murenge uwuhe cyangwa mu karere kahe?"
+            next_step = "Ohereza ahantu muri: umurenge, akagari cyangwa location."
+        else:
+            reply = (
+                "To find care close to you, tell me where you are — the sector or the "
+                "cell you are in. You can also share your location, and I will put the "
+                "closest place first."
+            )
+            follow_up = "Which sector or cell are you in?"
+            next_step = "Send your sector, cell, or location so the list can be sorted by distance."
+
+        symptoms = self._extract_symptoms_from_text(message)
+        warning_signs = self._check_warning_signs(message, symptoms)
+        urgency_level = self._enforce_urgency_floor(
+            self._determine_urgency(message, symptoms), warning_signs
+        )
+        if warning_signs:
+            reply = (
+                "Ibi bimenyetso bisaba kwa muganga ako kanya: " + ", ".join(warning_signs)
+                if rw
+                else "These symptoms need emergency care now: " + ", ".join(warning_signs)
+            ) + "\n\n" + reply
+
+        return {
+            "reply": reply,
+            "symptoms_identified": symptoms,
+            "follow_up_questions": [follow_up],
+            "possible_conditions": [],
+            "warning_signs": warning_signs,
+            "urgency_level": urgency_level,
+            "general_information": "",
+            "medication_information": [],
+            "recommended_next_step": next_step,
+            "sources": [],
+            "model_used": "health_facility_directory",
+            "confidence": 1.0,
+            "evidence": [],
+        }
+
+    def _provider_busy_result(
+        self,
+        language: str,
+        symptoms: List[str],
+        warning_signs: List[str],
+        urgency_level: str,
+    ) -> Dict[str, Any]:
+        """Honest reply for the patient when the configured model call failed."""
+        if language in ("rw", "mixed"):
+            notice = (
+                "Ntabwo nashoboye gutegura igisubizo cyuzuye ubu kuko serivisi ya AI "
+                "ifite umuvuduko munini ubu. Nyamuneka ongera wohereze ikibazo cyanyu "
+                "mu minota mike."
+            )
+            next_step = (
+                "Ongera wohereze ikibazo mu minota mike; niba ibimenyetso bikomeye "
+                "cyangwa bikomeje kwiyongera, gana ivuriro ako kanya."
+            )
+            warning_prefix = "Ibi bimenyetso bisaba kwa muganga ako kanya: "
+        else:
+            notice = (
+                "I could not complete a full answer just now because the assistant "
+                "service is briefly busy. Please send your question again in about a minute."
+            )
+            next_step = (
+                "Send the question again in about a minute. If your symptoms are "
+                "severe or getting worse, seek care now."
+            )
+            warning_prefix = "These symptoms need emergency care now: "
+
+        lines = []
+        if warning_signs:
+            lines.append(warning_prefix + ", ".join(warning_signs) + ".")
+        lines.append(notice)
+        lines.append(next_step)
+
+        return {
+            "reply": "\n\n".join(lines),
+            "symptoms_identified": symptoms,
+            "follow_up_questions": [],
+            "possible_conditions": [],
+            "warning_signs": warning_signs,
+            "urgency_level": urgency_level,
+            "general_information": "",
+            "medication_information": [],
+            "recommended_next_step": next_step,
+            "sources": [],
+            "model_used": "mock",
+            "confidence": 0.2,
+            "evidence": [],
+        }
+
     def _clarification_result(self, language: str) -> Dict[str, Any]:
-        if language == "rw":
+        if language in ("rw", "mixed"):
             reply = (
                 "Ntabwo nasobanukiwe neza ubutumwa bwanyu. Nyamuneka sobanura ikibazo "
                 "cy'ubuzima cyangwa ibimenyetso mufite, igihe byatangiriye, n'uko bikomeye."
@@ -1187,7 +1678,7 @@ class AIService:
 
     def _greeting_result(self, language: str, professional: bool = False) -> Dict[str, Any]:
         if professional:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 reply = (
                     "Muraho! Ndi umufasha mu gufata ibyemezo by'ubuvuzi. Mumbaze ku ndwara "
                     "zishoboka, umutekano w'imiti, imivangwa y'imiti, cyangwa amabwiriza yemewe."
@@ -1267,7 +1758,7 @@ class AIService:
                     found_symptoms.append("Umuriro")
                 elif "umutwe" in text_lower and display_name == "headache":
                     found_symptoms.append("Umutwe urampandura")
-                elif ("nda" in text_lower or "igifu" in text_lower) and display_name == "stomach pain":
+                elif ("nda " in text_lower or " nda" in text_lower or "igifu" in text_lower) and display_name == "stomach pain":
                     found_symptoms.append("Ububabare bwo mu nda")
                 elif "naniwe" in text_lower and display_name == "fatigue":
                     found_symptoms.append("Umunaniro ukabije")
@@ -1282,7 +1773,7 @@ class AIService:
         questions = []
 
         if "fever" in lower_symptoms or "umuriro" in lower_symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 questions.append("Umuriro mufite watangiye ryari, kandi uri ku he ngero?")
                 questions.append("Mwaba mwafashe umuti ugabanya umuriro nka paracetamol?")
             else:
@@ -1290,7 +1781,7 @@ class AIService:
                 questions.append("Have you taken any medication for the fever?")
 
         if "headache" in lower_symptoms or "umutwe" in lower_symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 questions.append("Ububabare bw'umutwe buri ku he gice neza?")
                 questions.append("Mwabuvuga ute (burashikira, burashushuza, cyangwa buragukomera)?")
             else:
@@ -1298,7 +1789,7 @@ class AIService:
                 questions.append("How would you describe the pain (sharp, dull, throbbing)?")
 
         if "cough" in lower_symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 questions.append("Inkorora mufite irumye cyangwa ikora ibitose?")
                 questions.append("Ibyo bimenyetso bimaze igihe kingana gute?")
             else:
@@ -1306,7 +1797,7 @@ class AIService:
                 questions.append("How long have you had the cough?")
 
         if "back pain" in lower_symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 questions.append("Ububabare bwo mu mugongo bumaze igihe kingana gute?")
                 questions.append("Mwaba mwarakomeretse, waguye, cyangwa mwarazamuye ikintu kiremereye?")
                 questions.append("Hari ukunanirwa mu maguru cyangwa ikibazo cyo gufata inkari?")
@@ -1316,7 +1807,7 @@ class AIService:
                 questions.append("Do you have leg weakness or numbness, or trouble controlling your bladder?")
 
         if "stomach pain" in lower_symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 questions.append("Ububabare bwo mu nda bumaze igihe kingana gute, kandi buri ku he gice neza?")
                 questions.append("Mwaba mufite kuruka, impiswi, umuriro, cyangwa amaraso mu musarane?")
                 questions.append("Ububabare burakomeye cyangwa buragenda bwiyongera?")
@@ -1326,7 +1817,7 @@ class AIService:
                 questions.append("Is the pain severe or getting worse?")
 
         if "fatigue" in lower_symptoms or "umunaniro" in lower_symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 questions.append("Umunaniro ukabije watangiye ryari, kandi kuruhuka birawugabanya?")
                 questions.append("Mwaba mufite umuriro, kubura umwuka, kuzungerwa, cyangwa kugwa igihumure?")
                 questions.append("Mwaba mufite izindi indwara karande cyangwa imiti mwatangiye gufata vuba?")
@@ -1336,7 +1827,7 @@ class AIService:
                 questions.append("Do you have other medical conditions or recently started any medicines?")
 
         if not questions:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 questions.append("Ibyo bimenyetso bimaze igihe kingana gute?")
                 questions.append("Mwaba mwarabonye izindi mpinduka mu buzima bwanyu?")
             else:
@@ -1351,39 +1842,39 @@ class AIService:
         questions = []
 
         if "fever" in lower_symptoms or "umuriro" in lower_symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 questions.append("Hari gutitira, gushyuha cyane, cyangwa ko mu ijosi hakomerera?")
                 questions.append("Waba warakorewe isuzuma rya malaria?")
             else:
                 questions.append("Does the fever come with chills, sweating, or a stiff neck?")
                 questions.append("Have you been tested for malaria?")
         if "headache" in lower_symptoms or "umutwe" in lower_symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 questions.append("Urumuri cyangwa urusaku birongera ububabare?")
             else:
                 questions.append("Does light or sound make the headache worse?")
         if "cough" in lower_symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 questions.append("Hari ububabare mu gituza cyangwa guhumeka bigoranye?")
             else:
                 questions.append("Does the cough come with chest pain or difficulty breathing?")
         if "diarrhea" in lower_symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 questions.append("Urashobora kunywa amazi ahagije, kandi uyaherukamo kangahe ku munsi?")
             else:
                 questions.append("Are you able to keep fluids down, and how many times a day is the diarrhea?")
         if "rash" in lower_symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 questions.append("Ibiheri byatangiye he, kandi biragenda bikwira?")
             else:
                 questions.append("Where did the rash start, and is it spreading?")
         if "shortness of breath" in lower_symptoms or "difficulty breathing" in lower_symptoms or "guhumeka bigoranye" in lower_symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 questions.append("Guhumeka bigoranye byiyongera iyo uryamye cyangwa ukora ibikorwa?")
             else:
                 questions.append("Does the breathing difficulty get worse when you lie down or with activity?")
 
-        if language == "rw":
+        if language in ("rw", "mixed"):
             questions.append("Hari ikintu kigabanya cyangwa cyongera ibimenyetso?")
             questions.append("Ufite izindi ndwara karande cyangwa imiti uri gufata?")
         else:
@@ -1417,7 +1908,7 @@ class AIService:
         conditions = []
 
         if "fever" in lower_symptoms or "umuriro" in lower_symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 conditions.append({
                     "name": "Indwara y'ubwandu bwa virusi cyangwa agakoko",
                     "likelihood": "medium",
@@ -1431,7 +1922,7 @@ class AIService:
                 })
 
         if "headache" in lower_symptoms or "umutwe" in lower_symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 conditions.append({
                     "name": "Umutwe wo gushikira no kunanirwa",
                     "likelihood": "medium",
@@ -1444,8 +1935,8 @@ class AIService:
                     "description": "Most common type of headache, often caused by stress",
                 })
 
-        if "cough" in lower_symptoms:
-            if language == "rw":
+        if "cough" in lower_symptoms or "inkorora" in lower_symptoms:
+            if language in ("rw", "mixed"):
                 conditions.append({
                     "name": "Indwara y'ubuhumekero yo hejuru",
                     "likelihood": "medium",
@@ -1468,7 +1959,9 @@ class AIService:
             "severe pain", "sudden weakness", "slurred speech",
             "loss of consciousness", "confusion",
             "ukunanirwa mu maguru", "gufata inkari", "umwanda utabasha kuwufata",
-            "ububabare mu gituza", "kubura umwuka"
+            "ububabare mu gituza", "ububabare mu gatuza", "kubura umwuka",
+            "kuruka amashereka", "kunanirwa konka", "guta ubwenge",
+            "kuruka amaraso", "ibimenyetso by'akaga"
         ]
 
         text_lower = patient_input.lower()
@@ -1478,15 +1971,91 @@ class AIService:
 
         return warning_signs
 
-    def _generate_general_information(self, symptoms: List[str], language: str = "en") -> str:
+    def _generate_general_information(
+        self, symptoms: List[str], language: str = "en", patient_text: str = ""
+    ) -> str:
         """Generate general medical information."""
+        lowered = patient_text.lower()
+        if any(
+            phrase in lowered
+            for phrase in (
+                "which symptoms mean", "go to a hospital", "must go to hospital",
+                "emergency symptoms", "when to go to hospital", "red flags",
+                "warning signs", "kugana ibitaro", "ibimenyetso by'akaga"
+            )
+        ):
+            if language in ("rw", "mixed"):
+                return (
+                    "Ibimenyetso by'akaga bisaba kugana ibitaro ako kanya bitarenze uyu munsi birimo:\n"
+                    "- Ububabare bukomeye cyangwa igitsikizo gikabije mu gatuza (bifitanye isano n'umutima)\n"
+                    "- Kubura umwuka cyangwa guhumeka bigoranye cyane bitunguranye\n"
+                    "- Gucika intege bitunguranye mu maso, ukuboko cyangwa ukuguru, cyangwa guhinduka kw'imvugo (ibimenyetso bya stroke)\n"
+                    "- Umuriro mwinshi ukabije uherekejwe no kuribwa ijosi, urujijo cyangwa ibiheri\n"
+                    "- Kuva amaraso menshi adahagarara cyangwa kuruka amaraso\n"
+                    "- Ububabare bukabije mu nda butangira bitunguranye\n"
+                    "- Guta ubwenge (loss of consciousness) cyangwa kugwa igihumura"
+                )
+            return (
+                "Critical red-flag symptoms that require immediate, same-day hospital emergency evaluation include:\n"
+                "- Severe chest pain, pressure, or tightness radiating to the jaw, neck, back, or arm\n"
+                "- Sudden severe shortness of breath, gasping, or inability to catch your breath\n"
+                "- Sudden numbness or weakness of the face, arm, or leg (especially on one side), or sudden confusion/slurred speech (FAST signs of stroke)\n"
+                "- High persistent fever accompanied by stiff neck, confusion, seizure, or a purple/petechial rash\n"
+                "- Severe uncontrolled bleeding, vomiting blood, or black tarry stools\n"
+                "- Sudden, unbearable abdominal pain\n"
+                "- Loss of consciousness, fainting with head injury, or altered mental status"
+            )
+
+        is_referral = any(
+            phrase in lowered
+            for phrase in (
+                "referral hospital", "refferal hospital", "which referral", "which refferal",
+                "what referral", "what refferal", "referral hospital in", "refferal hospital in",
+                "hospitals in this district", "hospital in this district",
+                "icyitegererezo", "icyitegerezo", "kwohererezwa", "kwoherezwa",
+                "ibitaro by'icyitegererezo", "ibitaro byicyitegererezo",
+                "ibitaro by'intara", "ibitaro byintara", "transfer letter",
+            )
+        )
+        if is_referral:
+            resolved_places = facility_service.resolve_places(patient_text)
+            district_name = resolved_places[0].name if resolved_places else "this area"
+            hospitals_in_district = []
+            if resolved_places:
+                try:
+                    from knowledge.models import HealthFacility
+                    h_qs = HealthFacility.objects.filter(
+                        district__iexact=district_name,
+                        facility_type="hospital"
+                    )
+                    hospitals_in_district = list(h_qs.values_list("name", flat=True).distinct()[:4])
+                except Exception:
+                    hospitals_in_district = []
+
+            if language in ("rw", "mixed"):
+                h_str = ", ".join(hospitals_in_district) if hospitals_in_district else "ibitaro by'akarere"
+                return (
+                    f"Muri gahunda y'ubuvuzi mu Rwanda no mu Karere ka {district_name}:\n"
+                    f"- Ibitaro by'Akarere n'iby'Intara bihari: {h_str}.\n"
+                    "- Ibitaro by'Icyitegererezo (Referral/Teaching Hospitals): Ku bibazo bikomeye bisaba inzobere zihariye, abarwayi boherezwa ku Bitaro by'Icyitegererezo nka CHUK, CHUB, Ruhengeri, cyangwa King Faisal Hospital.\n"
+                    "- Uko ihererekanya rikorwa: Mu buryo busanzwe, umurwayi ahera ku Kigo Nderabuzima (Health Centre) cyo mu murenge we, aho asuzumwa akaba ari ho ahabwa urupapuro rwo koherezwa (transfer sheet) rwemerwa n'ubwishingizi (nka Mutuelle de Sante/CBHI). Mu gihe ari ikibazo cyihutirwa cyane (emergency), umurwayi ajya ku bitaro ako kanya bitabaye ngombwa gutegereza urupapuro."
+                )
+            else:
+                h_str = ", ".join(hospitals_in_district) if hospitals_in_district else "local district hospitals"
+                return (
+                    f"In Rwanda's healthcare referral hierarchy and specifically for {district_name}:\n"
+                    f"- Primary & District Level Hospitals: {h_str}.\n"
+                    "- Referral & Specialized Hospitals: For specialized tertiary medical care, patients in this zone are referred to the regional referral hospital (such as Ruhengeri Referral Hospital for Northern Province) or national tertiary teaching hospitals including CHUK (University Teaching Hospital of Kigali) and King Faisal Hospital.\n"
+                    "- How the Referral Process Works: Routine and non-emergency hospital consultations require an official transfer recommendation (urupapuro rwo kohereza) issued by your local primary health centre for full coverage under Mutuelle de Sante (CBHI) or RAMA. However, for acute emergencies, patients should proceed directly to the nearest hospital emergency unit immediately without waiting for a transfer letter."
+                )
+
         if not symptoms:
-            if language == "rw":
+            if language in ("rw", "mixed"):
                 return "Nyamuneka sangiza amakuru arambuye ku bimenyetso byanyu kugira ngo dusuzume neza."
             return "Please provide more details about your symptoms for better assessment."
 
         symptom_list = ", ".join(symptoms)
-        if language == "rw":
+        if language in ("rw", "mixed"):
             return (
                 f"Hashingiwe ku bimenyetso mwambwiye ({symptom_list}), bishobora kuba bifitanye isano n'indwara zinyuranye. "
                 "Ni ngombwa gukomeza kureba uko ibimenyetso bimereye no kugisha inama inzobere mu buvuzi."
@@ -1514,4 +2083,5 @@ class AIService:
             },
         }
 
-        return recommendations.get(urgency_level, recommendations["ROUTINE_CONSULTATION"])[language]
+        lang_key = "rw" if language in ("rw", "mixed") else "en"
+        return recommendations.get(urgency_level, recommendations["ROUTINE_CONSULTATION"])[lang_key]

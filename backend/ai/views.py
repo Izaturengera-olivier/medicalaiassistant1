@@ -92,7 +92,9 @@ def analyze_symptoms(request):
             message=patient_input,
             history=data.get("history", []),
             patient_history=data.get("patient_history"),
-            current_medications=data.get("current_medications", [])
+            current_medications=data.get("current_medications", []),
+            latitude=data.get("latitude"),
+            longitude=data.get("longitude"),
         )
         evidence = assessment.pop("evidence", [])
 
@@ -152,6 +154,8 @@ def professional_chat(request):
             message=data["message"],
             history=data.get("history", []),
             professional_context=data.get("context"),
+            latitude=data.get("latitude"),
+            longitude=data.get("longitude"),
         )
         result.pop("evidence", None)
 

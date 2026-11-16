@@ -52,6 +52,18 @@ def test_factory_defaults_base_url():
     assert provider.model == "gpt-4o-mini"
 
 
+def test_groq_keeps_the_configured_gpt_oss_model():
+    """Groq decommissioned llama-3.3-70b-versatile; rewriting a working gpt-oss
+    model to it made every request 404 into the mock fallback."""
+    provider = get_llm_provider(
+        "groq",
+        api_key="k",
+        model="openai/gpt-oss-120b",
+        base_url="https://api.groq.com/openai/v1",
+    )
+    assert provider.model == "openai/gpt-oss-120b"
+
+
 def test_factory_resolves_deepseek_preset():
     provider = get_llm_provider("deepseek", api_key="k")
     assert provider.base_url == "https://api.deepseek.com"

@@ -3,7 +3,7 @@
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
 
-from .models import KnowledgeDocument, MedicalKnowledgeSource, RetrievedEvidence
+from .models import AdminPlace, HealthFacility, KnowledgeDocument, MedicalKnowledgeSource, RetrievedEvidence
 
 
 class KnowledgeDocumentInline(admin.TabularInline):
@@ -45,3 +45,30 @@ class RetrievedEvidenceAdmin(admin.ModelAdmin):
     list_filter = ["source", "retrieval_date"]
     search_fields = ["title", "url"]
     readonly_fields = ["retrieval_date", "created_at"]
+
+
+@admin.register(HealthFacility)
+class HealthFacilityAdmin(admin.ModelAdmin):
+    """Where care is found. Rows come from a mapped dataset, so admins mainly
+    correct a wrong name or deactivate a place that no longer exists."""
+
+    list_display = ["name", "facility_type", "sector", "district", "province", "is_active"]
+    list_filter = ["facility_type", "province", "district", "is_active"]
+    search_fields = ["name", "name_en", "district", "sector", "external_id"]
+    readonly_fields = ["external_id", "origin", "created_at", "updated_at"]
+    list_per_page = 50
+
+
+@admin.register(AdminPlace)
+class AdminPlaceAdmin(admin.ModelAdmin):
+    """The official hierarchy a patient's place name is resolved against.
+
+    A row only decides how a name is searched, so an admin mainly renames a place
+    the dataset spelled differently, or deactivates one that steals a match.
+    """
+
+    list_display = ["name", "level", "code", "sector", "district", "province", "is_active"]
+    list_filter = ["level", "province", "district", "is_active"]
+    search_fields = ["name", "code", "district", "sector", "cell"]
+    readonly_fields = ["created_at", "updated_at"]
+    list_per_page = 50

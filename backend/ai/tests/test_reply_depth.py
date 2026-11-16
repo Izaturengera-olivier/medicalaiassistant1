@@ -36,6 +36,39 @@ def test_patient_prompt_asks_for_depth_not_brevity():
     assert "Provide only the concise conclusion" not in prompt
 
 
+def test_emergency_replies_lead_with_the_urgent_instruction():
+    """Live replies put the emergency advice last on two of three red-flag cases."""
+    prompt = get_chat_system_prompt(evidence_block=EVIDENCE_SAMPLE, language="en")
+
+    assert "the FIRST line of `reply` is the urgent instruction" in prompt
+    assert "Never open such a reply with an explanation" in prompt
+
+
+def test_follow_up_turns_do_not_repeat_the_earlier_assessment():
+    """Live: "Should I take antibiotics for it?" repeated the whole first answer."""
+    prompt = get_chat_system_prompt(
+        evidence_block=EVIDENCE_SAMPLE, language="en", is_followup=True
+    )
+
+    assert "FOLLOW-UP TURN" in prompt
+    assert "Start `reply` with a direct answer" in prompt
+    assert "not another full assessment" in prompt
+
+
+def test_opening_turn_carries_no_follow_up_block():
+    prompt = get_chat_system_prompt(evidence_block=EVIDENCE_SAMPLE, language="en")
+
+    assert "FOLLOW-UP TURN" not in prompt
+
+
+def test_kinyarwanda_prompt_fixes_the_section_labels():
+    """Live: one Kinyarwanda reply carried the English "To help me understand better"."""
+    prompt = get_chat_system_prompt(evidence_block=EVIDENCE_SAMPLE, language="rw")
+
+    assert '"What this could mean" = "Ibyo bishoboka"' in prompt
+    assert '"To help me understand better" = "Kugira ngo menye neza"' in prompt
+
+
 def test_patient_prompt_selects_sections_instead_of_firing_every_one():
     prompt = get_chat_system_prompt(evidence_block=EVIDENCE_SAMPLE, language="en")
 
@@ -82,7 +115,7 @@ def test_depth_rules_work_in_kinyarwanda_and_keep_the_language_rules():
     assert "150-300 words" in prompt
     assert "NO MARKDOWN" in prompt
     # Depth must never pull English section labels into a Kinyarwanda answer.
-    assert "never leave English labels inside a Kinyarwanda reply" in prompt
+    assert "Never leave an English label inside a Kinyarwanda reply" in prompt
     assert "Ibyo bishoboka" in prompt
 
 
@@ -325,6 +358,83 @@ def test_offline_fallback_reply_does_not_narrate_sources():
     for banned in ("trusted sources", "approved medical sources", "nkomoko", "i searched"):
         assert banned not in reply.lower()
     assert "[1]" in reply
+
+
+def test_offline_fallback_skips_passages_that_only_share_a_word():
+    """The reported case: "ni ibihe bitaro bikomeye mu rwanda" retrieved the Malaria
+    page at relevance 1 and the fallback presented it as an answer."""
+    noise = [{
+        "title": "Malaria Signs and When to Seek Care",
+        "source_name": "World Health Organization",
+        "url": "https://www.who.int/malaria",
+        "content": "Malaria is common in Rwanda.",
+        "relevance_score": 1.0,
+    }]
+    service = AIService()
+
+    reply = service._mock_conversation(
+        "ni ibihe bitaro bikomeye mu rwanda",
+        [{"role": "user", "content": "ni ibihe bitaro bikomeye mu rwanda"}],
+        None,
+        None,
+        noise,
+    )["reply"]
+    professional = service._mock_professional_conversation(
+        "which are the major hospitals in rwanda", [], noise
+    )["reply"]
+
+    assert "Malaria" not in reply
+    assert "Amakuru y'ubuzima bijyanye" not in reply
+    assert "Ntabwo mfite amakuru ahagije" in reply
+    assert "Malaria" not in professional
+    assert "Ingingo zifitanye isano" not in professional
+
+
+def test_fallback_keeps_marker_positions_of_the_passages_it_presents():
+    service = AIService()
+    evidence = [
+        {
+            "title": "Noise",
+            "source_name": "WHO",
+            "url": "https://www.who.int/noise",
+            "content": "unrelated",
+            "relevance_score": 1.0,
+        },
+        {
+            "title": "Fever Guidance",
+            "source_name": "WHO",
+            "url": "https://www.who.int/fever",
+            "content": "Fever is a raised temperature.",
+            "relevance_score": 3.0,
+        },
+    ]
+
+    reply = service._mock_conversation("fever", [], None, None, evidence)["reply"]
+
+    assert "[2] Fever Guidance" in reply
+    assert "[1] Noise" not in reply
+    assert service._evidence_sources(evidence)[1]["url"] == "https://www.who.int/fever"
+
+
+def test_provider_failure_does_not_dress_up_unrelated_passages_as_an_answer():
+    """A rate-limited minute used to produce template text plus loosely-matched
+    passages, which the patient reported as an irrelevant clinical answer."""
+    service = AIService()
+
+    result = service._mock_conversation(
+        "I have had a headache for three days",
+        [{"role": "user", "content": "I have had a headache for three days"}],
+        None,
+        None,
+        _evidence(),
+        fallback_reason="429 Too Many Requests",
+    )
+
+    assert result["model_used"] == "mock"
+    assert "briefly busy" in result["reply"]
+    assert "Health information relevant to what you described" not in result["reply"]
+    assert "[" not in result["reply"]  # no citation to content it did not answer from
+    assert result["sources"] == []
 
 
 def test_citation_markers_map_onto_the_sources_array():

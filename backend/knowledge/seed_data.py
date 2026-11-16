@@ -33,6 +33,22 @@ DEFAULT_SOURCES = [
         "description": "Regulatory authority for medicines and medical devices"
     },
     {
+        "id": "rbc_rwanda",
+        "name": "Rwanda Biomedical Centre (RBC)",
+        "url": "https://rbc.gov.rw",
+        "source_type": "MOH",
+        "approval_status": "approved",
+        "description": "National operational agency for disease prevention, epidemic response, and specialized care in Rwanda"
+    },
+    {
+        "id": "rssb_rwanda",
+        "name": "Rwanda Social Security Board (CBHI / Mutuelle de Sante)",
+        "url": "https://rssb.rw",
+        "source_type": "MOH",
+        "approval_status": "approved",
+        "description": "Public manager of community-based health insurance (Mutuelle de Sante) and healthcare benefits in Rwanda"
+    },
+    {
         "id": "nih",
         "name": "National Institutes of Health / MedlinePlus",
         "url": "https://medlineplus.gov",
@@ -349,6 +365,76 @@ PATIENT_GUIDANCE_DOCUMENTS = [
         "content": "An estimated 13.4 million babies were born preterm in 2020, with rates from 4 to 16% across countries, and preterm birth complications are the leading cause of death among children under five; three-quarters of these deaths could be prevented with current cost-effective interventions. Antenatal prevention includes counselling on healthy diet and optimal nutrition and on tobacco and substance use, fetal measurements including early ultrasound, and a minimum of eight contacts with health professionals throughout pregnancy. Where early birth is expected, care may include antenatal steroids and tocolytic treatments to delay labour, and antibiotics for preterm prelabour rupture of membranes (PPROM). After birth, kangaroo mother care immediately, early initiation of breastfeeding, and support such as CPAP and caffeine for respiratory distress are used, and mothers and newborns should remain together from birth.",
         "source_id": "who",
         "url": "https://www.who.int/news-room/fact-sheets/detail/preterm-birth"
+    },
+    {
+        "id": "doc_39",
+        "title": "Where Care Happens in Rwanda: Referral Hospitals, District Hospitals and Health Centres",
+        "content": "Rwanda organises public care in levels, so a sick person is not expected to reach the biggest hospital straight away. A health post and community health workers handle the simplest problems; a health centre, ivuriro in Kinyarwanda, covers a sector and gives routine outpatient care, antenatal care, immunisation and normal delivery; a district hospital covers a district and has inpatient beds, an operating theatre and a laboratory; and a referral hospital or teaching hospital takes the difficult cases sent up from district hospitals, with specialists and advanced imaging. The government public facility register lists these referral and teaching hospitals: University Teaching Hospital of Kigali (CHUK) in Nyarugenge, Kigali; the Butare teaching hospital (CHUB) in Huye; Ngoma referral hospital in Kibungo; Ruhengeri referral hospital in Musanze; Kabgayi referral hospital in Muhanga; Kibuye referral hospital in Karongi; the Kigali mental health referral centre in Kinyinya, Gasabo; Inkuru Nziza orthopaedic specialised hospital in Gikondo, Kicukiro; Huye Isange rehabilitation centre in Huye; and HNP Caraës in Butare. A district hospital is usually the closest place with beds and a surgical team, which is why Rubavu district hospital, Gisenyi district hospital, Kabutare district hospital and Ruhengeri hospital are the right first stop for a serious problem that is not an immediate emergency. For an emergency, go to the nearest hospital at any level rather than waiting for a referral letter, and carry any document or medicine list you already have.",
+        "source_id": "moh_rwanda",
+        "url": "https://www.mmi.gov.rw/partners/public-health-facilities/referrals-and-teaching-hospitals"
+    },
+    {
+        "id": "doc_40",
+        "title": "Emergency Health Helplines and Urgent Care in Rwanda",
+        "content": "In Rwanda, acute emergencies and life-threatening conditions require immediate action. Call SAMU (Service d'Aide Medicale Urgente) at 112 or 912 for emergency ambulance transport. The Rwanda National Police emergency number is 112. For infectious disease emergencies, epidemic outbreaks, or urgent health advice, call the Rwanda Biomedical Centre (RBC) toll-free hotline at 114. For domestic violence, child abuse, and gender-based violence medical and psychosocial care, call Isange One Stop Centre at 3029 or go to the nearest Isange centre located in district hospitals across the country. In a medical emergency, go immediately to the closest hospital or health facility without waiting for transfer paperwork or referral letters; emergency stabilization is prioritized across all public health facilities in Rwanda.",
+        "source_id": "moh_rwanda",
+        "url": "https://moh.gov.rw"
+    },
+    {
+        "id": "doc_41",
+        "title": "What to Do When Feeling Unwell in an Unfamiliar Area in Rwanda",
+        "content": "If you feel sick in an area or district of Rwanda you do not know, follow these practical steps. First, assess your symptoms: if you have red flag warning signs (such as chest pain, severe difficulty breathing, sudden severe bleeding, persistent vomiting, severe headache with stiff neck, or loss of consciousness), go immediately to the nearest hospital or call 112 or 912 for SAMU ambulance. For non-emergency symptoms (such as mild fever, cough, stomach upset, or minor pain), ask local residents for the nearest Health Centre (ivuriro in Kinyarwanda) or Health Post (poste de sante) in that sector or cell. Health centres provide outpatient consultations, malaria testing, rapid blood tests, and basic treatment. Always carry your National ID (Indangamuntu), your health insurance card or Mutuelle de Sante (CBHI) details, and any medication you take. If you have Mutuelle de Sante, public health centres will attend to you, and transfer you to the district hospital if advanced care is required.",
+        "source_id": "moh_rwanda",
+        "url": "https://moh.gov.rw"
+    },
+    {
+        "id": "doc_42",
+        "title": "Rwanda National Malaria Guidelines: Testing, Coartem Treatment and Prevention",
+        "content": "Malaria is a major public health priority in Rwanda managed under the Rwanda Biomedical Centre (RBC) National Malaria Control Program. Fever, chills, sweating, muscle aches, and headache are typical signs. Rwanda national guidelines require mandatory diagnostic confirmation using a Rapid Diagnostic Test (RDT) or microscopy before taking anti-malarial medication. First-line treatment for confirmed uncomplicated Plasmodium falciparum malaria is oral Artemether-Lumefantrine (Coartem), taken with food or milk over three days. For severe or complicated malaria (such as cerebral malaria, severe anaemia, or vomiting everything), intravenous artesunate administered at a health centre or hospital is required. Prevention strategies in Rwanda include sleeping under long-lasting insecticidal nets (LLINs / inzitiramibu), indoor residual spraying (IRS) in high-risk districts, eliminating standing water, and seeking early testing on the same day fever begins, especially for pregnant women and children under five.",
+        "source_id": "rbc_rwanda",
+        "url": "https://rbc.gov.rw"
+    },
+    {
+        "id": "doc_43",
+        "title": "Rwanda Maternal, Newborn and Child Health: ANC Contacts, Delivery and Nutrition",
+        "content": "Rwanda prioritizes maternal and child survival through structured care from pregnancy to childhood. Pregnant women should complete at least 8 Antenatal Care (ANC / CPN) visits at their local health centre starting in the first trimester. ANC includes ultrasound scans, blood pressure monitoring to detect pre-eclampsia early, tetanus vaccination, screening for anaemia and HIV, and iron-folic acid supplementation. Delivery should always take place at a health facility attended by skilled midwives or doctors. Danger signs during pregnancy requiring immediate hospital care are vaginal bleeding, severe headache with vision changes, swollen face and hands, high fever, or reduced baby movements. For child health, community health workers (Abajyanama b'ubuzima) and health centres monitor infant growth and provide the Shisha Kibondo supplementary nutrition program for vulnerable pregnant/lactating mothers and children under two to prevent malnutrition and stunting.",
+        "source_id": "moh_rwanda",
+        "url": "https://moh.gov.rw"
+    },
+    {
+        "id": "doc_44",
+        "title": "Rwanda National Guidelines: Tuberculosis (TB) and HIV Care (Treat All, TLD)",
+        "content": "Rwanda provides free, comprehensive diagnosis and treatment for Tuberculosis (TB) and HIV at all public health facilities under RBC programs. Tuberculosis is diagnosed using rapid GeneXpert MTB/RIF testing and managed with a standard 6-month Directly Observed Therapy (DOTS) regimen; any cough lasting more than two weeks, night sweats, unexplained weight loss, or chest pain warrants TB testing. For HIV, Rwanda implements the Treat All policy: anyone testing positive on rapid HIV tests begins antiretroviral therapy (ART) promptly, typically with the first-line fixed-dose combination of Tenofovir, Lamivudine, and Dolutegravir (TLD). Regular viral load testing ensures viral suppression, which prevents disease progression and eliminates transmission. Prevention of mother-to-child transmission (PMTCT), Pre-Exposure Prophylaxis (PrEP), and emergency Post-Exposure Prophylaxis (PEP within 72 hours) are widely accessible.",
+        "source_id": "rbc_rwanda",
+        "url": "https://rbc.gov.rw"
+    },
+    {
+        "id": "doc_45",
+        "title": "Epidemic Preparedness in Rwanda: Marburg Virus, Mpox and Cholera Protocols",
+        "content": "Rwanda maintains strict epidemic surveillance and infection prevention protocols under the Ministry of Health and RBC. Marburg Virus Disease (MVD) and Ebola are viral haemorrhagic fevers characterized by sudden high fever, severe headache, muscle aches, extreme fatigue, vomiting, diarrhea, and in severe stages, unexplained bleeding. Transmission occurs through direct contact with blood, body fluids, or contaminated items from infected persons. In any suspected outbreak or case, avoid contact, practice frequent hand hygiene, isolate immediately, and notify the Ministry of Health and RBC immediately via toll-free number 114. Cholera is prevented by drinking boiled or treated water, using latrines, and thorough handwashing; severe watery diarrhea requires immediate Oral Rehydration Salts (ORS) and urgent transfer to a health facility. Rwanda deploys rapid response teams, mobile laboratories, and dedicated treatment centers during epidemics.",
+        "source_id": "rbc_rwanda",
+        "url": "https://rbc.gov.rw"
+    },
+    {
+        "id": "doc_46",
+        "title": "Rwanda FDA Guidelines: Medicine Safety, Prescriptions and Antibiotic Stewardship",
+        "content": "The Rwanda Food and Drugs Authority (Rwanda FDA) regulates pharmaceuticals, medical devices, and food safety across Rwanda. Medicines are divided into Over-The-Counter (OTC) drugs for mild self-limiting symptoms and Prescription-Only Medicines (POM) requiring a licensed clinician's prescription. In Rwanda, dispensing antibiotics without a valid medical prescription is strictly prohibited by law to prevent antimicrobial resistance (AMR). Patients must only buy medicines from licensed pharmacies (farumasi) or accredited health facility dispensaries, inspect packaging for tamper seals and expiry dates, and complete the full prescribed course. Never share medicines with others. Adverse drug reactions or substandard medications should be reported to the pharmacist, physician, or Rwanda FDA pharmacovigilance portal (toll-free 8444 or www.rfd.gov.rw).",
+        "source_id": "fda_rwanda",
+        "url": "https://rfd.gov.rw"
+    },
+    {
+        "id": "doc_47",
+        "title": "National Immunization Schedule and Preventable Diseases in Rwanda",
+        "content": "Rwanda's Expanded Programme on Immunization (EPI / Gahunda y'Inkingo) provides free vaccines protecting against life-threatening childhood illnesses. At birth: BCG (tuberculosis) and Oral Polio Vaccine (OPV-0). At 6, 10, and 14 weeks: Pentavalent vaccine (Diphtheria, Tetanus, Pertussis, Hepatitis B, Haemophilus influenzae type b), Pneumococcal conjugate vaccine (PCV), Rotavirus vaccine, and Inactivated Polio Vaccine (IPV). At 9 months: Measles-Rubella 1 (MR-1) and Vitamin A. At 15 months: Measles-Rubella 2 (MR-2). Rwanda also conducts nationwide Human Papillomavirus (HPV) vaccination for girls aged 12 years in schools, achieving over 95% coverage to eliminate cervical cancer. Vaccines are delivered through health centres and community outreach, maintaining high immunity across the country.",
+        "source_id": "rbc_rwanda",
+        "url": "https://rbc.gov.rw"
+    },
+    {
+        "id": "doc_48",
+        "title": "Health Insurance in Rwanda: Mutuelle de Sante (CBHI), RAMA and Care Referrals",
+        "content": "Over 90% of Rwandans are covered by health insurance, primarily Community-Based Health Insurance (CBHI / Mutuelle de Sante) managed by the Rwanda Social Security Board (RSSB), alongside RAMA (civil servants and private employees) and MMI (military). Under Mutuelle de Sante, patients receive care according to Rwanda's established referral system: first visit a Health Post or Sector Health Centre (Ivuriro); if specialist or surgical care is needed, the doctor issues a formal transfer (urusobane) to the District Hospital, which in turn can refer to a National Referral Hospital (such as CHUK, CHUB, RMH, King Faisal Hospital, or Ndera). Under Mutuelle, patient co-payments are minimal at health centres and 10% of hospital invoices. For life-threatening emergencies, any public hospital provides emergency care immediately without requiring prior transfer forms.",
+        "source_id": "rssb_rwanda",
+        "url": "https://rssb.rw"
     },
 ]
 
