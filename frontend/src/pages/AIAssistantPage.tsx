@@ -10,6 +10,7 @@ import { ThinkingSendButton } from "../components/common/ThinkingSendButton";
 import { AssistantReply } from "../components/common/AssistantReply";
 import { detectLanguage, speak, stopSpeaking } from "../utils/voice";
 import { replyToPlainText } from "../utils/replyText";
+import { coordsForQuestion } from "../utils/deviceLocation";
 
 interface AttachedDoc {
   id?: number;
@@ -62,6 +63,7 @@ interface Message {
   content: string;
   document?: AttachedDoc;
   details?: ProfessionalReply | null;
+  isTyping?: boolean;
 }
 
 export function AIAssistantPage() {
@@ -85,6 +87,14 @@ export function AIAssistantPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const nextLocalId = useRef(-1);
+  const typingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopTyping = () => {
+    if (typingTimerRef.current !== null) {
+      clearInterval(typingTimerRef.current);
+      typingTimerRef.current = null;
+    }
+  };
 
   useEffect(() => {
     const node = logRef.current;
@@ -101,7 +111,12 @@ export function AIAssistantPage() {
     return () => cancelAnimationFrame(rafId);
   }, [messages, sending, showDetails, selectedFile]);
 
-  useEffect(() => stopSpeaking, []);
+  useEffect(() => {
+    return () => {
+      stopTyping();
+      stopSpeaking();
+    };
+  }, []);
 
   // Patients land on this page too, so the empty state must not read like a
   // clinician's differential/interaction tool.
@@ -112,6 +127,7 @@ export function AIAssistantPage() {
   ];
 
   const startNewChat = () => {
+    stopTyping();
     stopSpeaking();
     setActiveId(null);
     setMessages([]);
@@ -123,6 +139,7 @@ export function AIAssistantPage() {
   };
 
   const openConversation = async (id: number) => {
+    stopTyping();
     stopSpeaking();
     setError(null);
     setSelectedFile(null);
@@ -169,6 +186,7 @@ export function AIAssistantPage() {
     const content = (text ?? input).trim();
     if ((!content && !selectedFile) || sending) return;
 
+    stopTyping();
     setError(null);
     setSending(true);
     const fileToSend = selectedFile;
@@ -200,11 +218,15 @@ export function AIAssistantPage() {
         data = res.data;
       } else {
         const history = messages.map((m) => ({ role: m.role, content: m.content }));
+        // Only a question about where to get care is worth a location, and only
+        // a location the device will actually give.
+        const location = await coordsForQuestion(content);
         const res = isPatient
           ? await aiAPI.analyzeSymptoms({
               patient_input: content,
               history,
               conversation_id: activeId ?? undefined,
+              ...location,
             })
           : await aiAPI.professionalChat({
               message: content,
@@ -214,6 +236,7 @@ export function AIAssistantPage() {
                 role: user?.role,
                 case_notes: caseContext.trim() || undefined,
               },
+              ...location,
             });
         data = res.data;
       }
@@ -226,12 +249,51 @@ export function AIAssistantPage() {
       setRefreshSignal((s) => s + 1);
 
       const reply = data.reply?.trim() || data.general_information || t("aiAssistant.emptyReply");
-      setMessages((m) => [...m, { id: nextLocalId.current--, role: "assistant", content: reply, details: data }]);
-      if (viaVoice) {
-        // Speak the plain-text form: never section labels' colons, bullets or [1].
-        const spoken = replyToPlainText(reply);
-        speak(spoken, detectLanguage(spoken));
-      }
+      const assistantId = nextLocalId.current--;
+
+      // Progressive fast writing effect
+      setMessages((m) => [
+        ...m,
+        {
+          id: assistantId,
+          role: "assistant",
+          content: "",
+          details: data,
+          isTyping: true,
+        },
+      ]);
+
+      let charIndex = 0;
+      const fullLength = reply.length;
+      // Fast progressive typing: 4-8 chars every 12ms so it writes quickly and smoothly
+      const chunkSize = Math.max(4, Math.min(10, Math.ceil(fullLength / 60)));
+      const intervalMs = 12;
+
+      typingTimerRef.current = setInterval(() => {
+        charIndex += chunkSize;
+        if (charIndex >= fullLength) {
+          stopTyping();
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === assistantId
+                ? { ...msg, content: reply, isTyping: false }
+                : msg
+            )
+          );
+          if (viaVoice) {
+            // Speak the plain-text form: never section labels' colons, bullets or [1].
+            const spoken = replyToPlainText(reply);
+            speak(spoken, detectLanguage(spoken));
+          }
+        } else {
+          const currentText = reply.slice(0, charIndex);
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === assistantId ? { ...msg, content: currentText } : msg
+            )
+          );
+        }
+      }, intervalMs);
     } catch (err) {
       setError(errorMessage(err));
       setMessages((m) => [
@@ -332,14 +394,18 @@ export function AIAssistantPage() {
 
                     {m.role === "assistant" ? (
                       <div className="chatgpt-msg-content chatgpt-msg-content--rich">
-                        <AssistantReply content={m.content} sources={m.details?.sources} />
+                        <AssistantReply
+                          content={m.content}
+                          sources={m.details?.sources}
+                          isTyping={m.isTyping}
+                        />
                       </div>
                     ) : (
                       <div className="chatgpt-msg-content">{m.content}</div>
                     )}
 
                     {/* Rich scanner findings card inside assistant message */}
-                    {m.role === "assistant" && m.details?.scan_findings && m.details.scan_findings.length > 0 && (
+                    {!m.isTyping && m.role === "assistant" && m.details?.scan_findings && m.details.scan_findings.length > 0 && (
                       <div className="scan-analysis-card">
                         <div className="scan-header">
                           <div className="scan-title">
@@ -388,7 +454,7 @@ export function AIAssistantPage() {
                       </div>
                     )}
 
-                    {m.role === "assistant" && (
+                    {!m.isTyping && m.role === "assistant" && (
                       <div className="chatgpt-msg-actions">
                         <SpeakButton text={replyToPlainText(m.content)} />
                       </div>
@@ -412,7 +478,7 @@ export function AIAssistantPage() {
                 </div>
               )}
 
-              {lastReply && !sending && (
+              {lastReply && !sending && !messages.some((msg) => msg.isTyping) && (
                 <div className="chatgpt-details">
                   <button type="button" className="chatgpt-details-toggle" onClick={() => setShowDetails((v) => !v)}>
                     {showDetails ? t("chat.detailsHide") : t("chat.detailsToggle")}

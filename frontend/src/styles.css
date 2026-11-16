@@ -532,6 +532,23 @@ nav a { margin-left: 12px; }
 .reply-citation-link .reply-citation { cursor: pointer; }
 .reply-citation-link:hover .reply-citation,
 .reply-citation-link:focus-visible .reply-citation { color: var(--accent); text-decoration: underline; }
+
+/* Typing cursor for fast progressive typewriter effect */
+.chatgpt-typing-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  background-color: var(--accent);
+  margin-left: 3px;
+  vertical-align: -2px;
+  border-radius: 1px;
+  animation: chatgpt-typing-blink 0.75s infinite ease-in-out;
+}
+
+@keyframes chatgpt-typing-blink {
+  0%, 100% { opacity: 1; transform: scaleY(1); }
+  50% { opacity: 0.15; transform: scaleY(0.85); }
+}
 /* ChatGPT-style footnote strip: one light rule, then small source chips.
    It is part of the reply, not another bubble, so it borrows no card surface. */
 .reply-references {

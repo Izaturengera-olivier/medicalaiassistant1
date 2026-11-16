@@ -15,6 +15,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { aiAPI, consultationsAPI } from "../../services/api";
 import { AssistantReply } from "../../components/AssistantReply";
 import type { ReplySource } from "../../utils/replyText";
+import { coordsForQuestion } from "../../utils/deviceLocation";
 
 interface Message {
   role: "user" | "assistant";
@@ -76,11 +77,13 @@ export const SymptomAssessmentScreen = () => {
         setConsultationId(cid);
       }
 
+      const location = await coordsForQuestion(userMsg);
       const res = await aiAPI.analyzeSymptoms({
         patient_input: userMsg,
         history,
         consultation_id: cid ?? undefined,
         conversation_id: conversationId ?? undefined,
+        ...location,
       });
 
       const data = res.data;

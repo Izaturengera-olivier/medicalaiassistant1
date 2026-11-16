@@ -195,4 +195,24 @@ describe("<AssistantReply /> citations as links", () => {
     expect(spoken).toContain("Cough");
     expect(spoken).toContain("WHO guidance");
   });
+
+  it("renders typing cursor and defers references when isTyping is true", () => {
+    const { container } = render(
+      <div className="chatgpt-msg-content chatgpt-msg-content--rich">
+        <AssistantReply content="Evaluating your symptoms [1]." sources={SOURCES} isTyping={true} />
+      </div>
+    );
+    expect(container.querySelector(".chatgpt-typing-cursor")).not.toBeNull();
+    // References should be deferred while typing
+    expect(container.querySelector(".reply-references")).toBeNull();
+  });
+
+  it("renders typing cursor when content is empty and isTyping is true", () => {
+    const { container } = render(
+      <div className="chatgpt-msg-content chatgpt-msg-content--rich">
+        <AssistantReply content="" isTyping={true} />
+      </div>
+    );
+    expect(container.querySelector(".chatgpt-typing-cursor")).not.toBeNull();
+  });
 });

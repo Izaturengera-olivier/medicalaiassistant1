@@ -130,12 +130,16 @@ export const aiAPI = {
     current_medications?: string[];
     consultation_id?: number;
     conversation_id?: number;
+    latitude?: number;
+    longitude?: number;
   }) => api.post("/ai/analyze-symptoms/", data),
   professionalChat: (data: {
     message: string;
     history?: { role: "user" | "assistant"; content: string }[];
     context?: Record<string, unknown>;
     conversation_id?: number;
+    latitude?: number;
+    longitude?: number;
   }) => api.post("/ai/professional-chat/", data),
   uploadAndAnalyze: (formData: FormData) =>
     api.post("/ai/upload-and-analyze/", formData, {

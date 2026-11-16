@@ -82,13 +82,24 @@ function withCitations(
 export function AssistantReply({
   content,
   sources,
+  isTyping = false,
 }: {
   content: string;
   sources?: readonly ReplySource[] | null;
+  isTyping?: boolean;
 }) {
   const { t } = useTranslation();
   const blocks = parseReplyBlocks(content);
-  if (!blocks.length) return null;
+  if (!blocks.length) {
+    if (isTyping) {
+      return (
+        <p className="reply-paragraph">
+          <span className="chatgpt-typing-cursor" aria-hidden="true" />
+        </p>
+      );
+    }
+    return null;
+  }
 
   const references = sourceLinksForDisplay(sources, citedMarkers(content));
 
@@ -98,19 +109,29 @@ export function AssistantReply({
     <>
       {blocks.map((block, index) => {
         const key = `b${index}`;
+        const isLast = isTyping && index === blocks.length - 1;
+        const cursor = isLast ? (
+          <span className="chatgpt-typing-cursor" aria-hidden="true" />
+        ) : null;
+
         if (block.kind === "label") {
           return (
             <div key={key} className="reply-section-label">
               {inline(block.text, key)}
+              {cursor}
             </div>
           );
         }
         if (block.kind === "list") {
-          const items = block.items.map((item, itemIndex) => (
-            <li key={`i${itemIndex}`} className="reply-list-item">
-              {inline(item, `${key}-${itemIndex}`)}
-            </li>
-          ));
+          const items = block.items.map((item, itemIndex) => {
+            const isLastItem = isLast && itemIndex === block.items.length - 1;
+            return (
+              <li key={`i${itemIndex}`} className="reply-list-item">
+                {inline(item, `${key}-${itemIndex}`)}
+                {isLastItem ? cursor : null}
+              </li>
+            );
+          });
           const className = `reply-list${block.ordered ? " reply-list--ordered" : ""}`;
           return block.ordered ? (
             <ol key={key} className={className}>
@@ -125,11 +146,12 @@ export function AssistantReply({
         return (
           <p key={key} className="reply-paragraph">
             {inline(block.text, key)}
+            {cursor}
           </p>
         );
       })}
 
-      {references.length > 0 && (
+      {!isTyping && references.length > 0 && (
         <div className="reply-references">
           <div className="reply-references-title">{t("chat.referencesTitle")}</div>
           <ul className="reply-reference-list">

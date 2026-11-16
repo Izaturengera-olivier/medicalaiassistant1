@@ -8,6 +8,17 @@
     "backgroundColor": "#f8fafc",
     "platforms": ["ios", "android"],
     "assetBundlePatterns": ["**/*"],
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Your location is used only to put the closest clinic or hospital first when you ask where to get care.",
+          "isIosBackgroundLocationEnabled": false,
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false
+        }
+      ]
+    ],
     "splash": {
       "backgroundColor": "#0d9488",
       "resizeMode": "contain"

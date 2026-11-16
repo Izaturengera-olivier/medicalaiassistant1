@@ -196,11 +196,15 @@ export const aiAPI = {
     history?: ChatHistoryTurn[];
     consultation_id?: number;
     conversation_id?: number;
+    latitude?: number;
+    longitude?: number;
   }) => mobileAPI.post<AssessmentResult>("/ai/analyze-symptoms/", data),
   professionalChat: (data: {
     message: string;
     history?: ChatHistoryTurn[];
     conversation_id?: number;
+    latitude?: number;
+    longitude?: number;
   }) => mobileAPI.post<AssessmentResult>("/ai/professional-chat/", data),
   // Multipart body: RN FormData takes { uri, name, type } for file parts.
   uploadAndAnalyze: (formData: FormData) =>

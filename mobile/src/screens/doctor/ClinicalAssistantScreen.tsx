@@ -14,6 +14,7 @@ import {
 import { aiAPI } from "../../services/api";
 import { AssistantReply } from "../../components/AssistantReply";
 import type { ReplySource } from "../../utils/replyText";
+import { coordsForQuestion } from "../../utils/deviceLocation";
 
 interface ChatTurn {
   role: "user" | "assistant";
@@ -52,10 +53,12 @@ export const ClinicalAssistantScreen = () => {
       .map((m) => ({ role: m.role, content: m.content }));
 
     try {
+      const location = await coordsForQuestion(userQuery);
       const res = await aiAPI.professionalChat({
         message: userQuery,
         history,
         conversation_id: conversationId ?? undefined,
+        ...location,
       });
 
       if (res.data.conversation_id) {

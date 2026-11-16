@@ -10,6 +10,7 @@ import { ThinkingSendButton } from "../../components/common/ThinkingSendButton";
 import { AssistantReply } from "../../components/common/AssistantReply";
 import { detectLanguage, speak, stopSpeaking } from "../../utils/voice";
 import { replyToPlainText } from "../../utils/replyText";
+import { coordsForQuestion } from "../../utils/deviceLocation";
 
 interface AttachedDoc {
   id?: number;
@@ -222,11 +223,13 @@ export function AssessmentPage() {
         data = res.data;
       } else {
         const history = messages.map((m) => ({ role: m.role, content: m.content }));
+        const location = await coordsForQuestion(text);
         const res = await aiAPI.analyzeSymptoms({
           patient_input: text,
           consultation_id: cid,
           conversation_id: activeId ?? undefined,
           history,
+          ...location,
         });
         data = res.data;
       }

@@ -48,3 +48,26 @@ test("shows a microphone button on the symptom assessment page", () => {
 
   expect(screen.getByRole("button", { name: /voice input|microphone/i })).toBeInTheDocument();
 });
+
+test("renders LoginPage within RootLayout AuthProvider via router", async () => {
+  const { createMemoryRouter, RouterProvider } = await import("react-router-dom");
+  const { LoginPage } = await import("./pages/auth/LoginPage");
+  const { AuthProvider } = await import("./context/AuthContext");
+  const { Outlet } = await import("react-router-dom");
+
+  const testRouter = createMemoryRouter([
+    {
+      element: (
+        <AuthProvider>
+          <Outlet />
+        </AuthProvider>
+      ),
+      children: [
+        { path: "/login", element: <LoginPage /> },
+      ],
+    },
+  ], { initialEntries: ["/login"] });
+
+  render(<RouterProvider router={testRouter} />);
+  expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
+});
