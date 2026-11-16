@@ -86,15 +86,28 @@ App: [http://localhost:5173](http://localhost:5173)
 
 Leave `AI_PROVIDER=mock` and `EMBEDDING_PROVIDER=mock` until Phases 6–7. Real keys belong in `.env` only.
 
-To enable live retrieval for patient messages, configure a server-side Tavily key:
+To let the assistant ground answers in current trusted pages, configure a live
+search provider in `.env` (the step-by-step setup for each is in `.env.example`):
 
 ```bash
-WEB_SEARCH_PROVIDER=tavily
-WEB_SEARCH_API_KEY=replace-with-your-key
-WEB_SEARCH_ALLOWED_DOMAINS=who.int,moh.gov.rw,rfd.gov.rw,cdc.gov,nih.gov,nhs.uk,mayoclinic.org
+# Tried left to right; the first provider that answers wins, so either may be blank.
+WEB_SEARCH_PROVIDER=google,tavily
+WEB_SEARCH_GOOGLE_API_KEY=replace-with-your-key
+WEB_SEARCH_GOOGLE_ENGINE_ID=replace-with-your-engine-id
+WEB_SEARCH_API_KEY=replace-with-your-tavily-key
+WEB_SEARCH_ALLOWED_DOMAINS=who.int,moh.gov.rw,rbc.gov.rw,rfd.gov.rw,cdc.gov,nih.gov,nhs.uk,mayoclinic.org
 ```
 
-The service searches the local approved corpus first, then the configured medical domains. It does not search arbitrary websites or allow the model to invent citations. The configured LLM privately reviews the conversation and retrieved evidence before returning its structured answer; private chain-of-thought is never returned to the patient.
+Every question is searched, not only the ones the local corpus answers poorly. The
+service searches the local approved corpus first, then the configured medical
+domains, and drops any live result whose URL is not one of those domains (or a
+subdomain of one) before it reaches the model. It does not search arbitrary
+websites or allow the model to invent citations. With no provider configured, or
+while a provider has no key, answers come from the built-in corpus only and no
+search request leaves the server. Restart the backend after editing `.env`.
+The configured LLM privately reviews the conversation and retrieved evidence
+before returning its structured answer; private chain-of-thought is never
+returned to the patient.
 
 ## Testing
 

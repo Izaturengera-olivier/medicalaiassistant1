@@ -31,5 +31,6 @@ RUN DJANGO_SECRET_KEY=build-phase-dummy-key \
 
 EXPOSE 8000
 
-# Run database migrations and launch production Gunicorn WSGI server
-CMD ["sh", "-c", "python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 3 --timeout 120 --access-logfile - --error-logfile -"]
+# Run database migrations, load the health-facility register on a fresh database,
+# then launch the production Gunicorn WSGI server
+CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py seed_admin_places --if-empty && python manage.py seed_health_facilities --if-empty && gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 3 --timeout 120 --access-logfile - --error-logfile -"]

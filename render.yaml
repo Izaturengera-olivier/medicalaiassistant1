@@ -42,13 +42,18 @@ services:
         value: deepseek-chat
       - key: AI_API_KEY
         sync: false
-      # Optional Medical Web Search
+      # Optional Medical Web Search (providers tried left to right; enter the keys
+      # on the Render Blueprint setup page, see .env.example for how to get them)
       - key: WEB_SEARCH_PROVIDER
-        value: tavily
+        value: google,tavily
+      - key: WEB_SEARCH_GOOGLE_API_KEY
+        sync: false
+      - key: WEB_SEARCH_GOOGLE_ENGINE_ID
+        sync: false
       - key: WEB_SEARCH_API_KEY
         sync: false
       - key: WEB_SEARCH_ALLOWED_DOMAINS
-        value: who.int,moh.gov.rw,rfd.gov.rw,cdc.gov,nih.gov,nhs.uk,mayoclinic.org,medlineplus.gov,ncbi.nlm.nih.gov,fda.gov,acr.org,nice.org.uk
+        value: who.int,moh.gov.rw,rbc.gov.rw,rfd.gov.rw,cdc.gov,nih.gov,nhs.uk,mayoclinic.org,medlineplus.gov,ncbi.nlm.nih.gov,fda.gov,acr.org,nice.org.uk
       # Authentication
       - key: JWT_ACCESS_MINUTES
         value: "60"

@@ -28,7 +28,8 @@ The repository includes a ready-to-use [`render.yaml`](../render.yaml) blueprint
 3. **Configure Environment Secrets**:
    Render automatically links the database connection string and cross-service URLs. You will only be prompted to supply your secret API keys:
    - `AI_API_KEY`: Your DeepSeek, OpenAI, or Gemini API key.
-   - `WEB_SEARCH_API_KEY`: *(Optional)* Your Tavily search API key for live medical guidelines.
+   - `WEB_SEARCH_GOOGLE_API_KEY` and `WEB_SEARCH_GOOGLE_ENGINE_ID`: *(Optional)* Google Programmable Search credentials for live medical guidelines.
+   - `WEB_SEARCH_API_KEY`: *(Optional)* Tavily search API key, used when Google has no key or returns nothing.
 
 4. **Click "Apply"**:
    Render will build the Docker container for the backend, run database migrations, compile the React frontend, and deploy both with automatic HTTPS SSL certificates!
