@@ -92,6 +92,48 @@ class TestProfessionalReplyLanguage:
 
 
 @pytest.mark.django_db
+class TestFrenchReplyLanguage:
+    def test_french_message_requests_french_reply(self, provider):
+        AIService().converse("J'ai de la fièvre et une toux depuis deux jours")
+        prompt = system_prompt_of(provider)
+
+        assert "writing in French" in prompt
+        assert "writing in Kinyarwanda" not in prompt
+        assert "writing in English" not in prompt
+
+    def test_french_health_question_stays_french(self, provider):
+        AIService().converse("J'ai mal à la tête depuis deux jours, que faire ?")
+
+        assert "writing in French" in system_prompt_of(provider)
+
+    def test_kinyarwanda_with_one_french_looking_word_stays_kinyarwanda(self, provider):
+        AIService().converse("Mfite umuriro n'inkorora, nkore iki?")
+
+        assert "writing in Kinyarwanda" in system_prompt_of(provider)
+
+    def test_a_lowercase_rwandan_place_name_keeps_an_english_question_english(self):
+        """Live: "where rwankeri health center located?" was answered in Kinyarwanda."""
+        message = "where rwankeri health center located? i want sector"
+
+        assert AIService()._detect_language(message, []) == "en"
+
+
+@pytest.mark.django_db
+class TestAnswerTheExactQuestion:
+    def test_patient_prompt_forbids_substituting_a_nearby_list(self, provider):
+        AIService().converse("I have had a fever for two days, what should I do?")
+        prompt = system_prompt_of(provider)
+
+        assert "ANSWER THE EXACT QUESTION" in prompt
+        assert "latest message wins" in prompt
+
+    def test_professional_prompt_carries_the_same_rule(self, provider):
+        AIService().converse_professional("Fever of 39 C for two days in a 5-year-old")
+
+        assert "ANSWER THE EXACT QUESTION" in system_prompt_of(provider)
+
+
+@pytest.mark.django_db
 class TestKinyarwandaQuality:
     def test_kinyarwanda_reply_carries_quality_rules_and_glossary(self, provider):
         AIService().converse("mfite umuriro n'inkorora kuva ejo")

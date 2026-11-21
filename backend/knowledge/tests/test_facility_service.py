@@ -439,6 +439,7 @@ def test_a_symptom_message_never_reads_the_place_or_facility_tables(db):
         ({"name": "Kinigi Health Centre", "amenity": "hospital"}, "health_center"),
         ({"name": "Bungwe Health Post", "amenity": "hospital"}, "health_post"),
         ({"name": "Muhoza Pharmacy", "amenity": "pharmacy"}, "pharmacy"),
+        ({"name": "Ruli Sector", "amenity": "hospital"}, "other"),
         ({"name": "APAPER Primary School", "amenity": "hospital"}, "other"),
     ],
 )
@@ -556,3 +557,73 @@ def test_a_near_me_question_with_no_place_asks_where_the_patient_is(facilities):
     assert result is not None
     assert "tell me where you are" in result["reply"]
     assert result["follow_up_questions"]
+
+
+def test_device_coordinates_do_not_reorder_a_place_the_patient_named(facilities):
+    """Live bug: "which health centre near me in Gakenke" was answered with the
+    district's facilities ranked from the phone's fix 30 km away, so every row
+    read "25.7 km" and the named district was lost in the noise."""
+    found = facility_service.search(
+        "health centres in Musanze", latitude=-1.68, longitude=29.26
+    )
+
+    assert found.place == "Musanze"
+    assert found.coordinates is None
+    assert all(row["distance_km"] is None for row in found.results)
+
+
+def test_a_named_place_wins_over_a_device_fix_and_says_so(facilities):
+    result = AIService()._facility_result(
+        "am at Musanze which health centre near me?", [],
+        latitude=-1.68, longitude=29.26,
+    )
+
+    assert result is not None
+    assert result["reply"].startswith("Care facilities in Musanze:")
+    assert "km" not in result["reply"]
+    assert "Name the sector or cell" in result["recommended_next_step"]
+
+
+def test_a_row_named_after_an_admin_unit_is_not_a_hospital(facilities):
+    """Live bug: "Ruli Sector" is filed by OSM as a hospital beside Ruli District
+    Hospital, and was listed to the patient as a place to get care."""
+    make("Musanze", name="Ruli Sector", sector="Ruli")
+
+    names = [row["name"] for row in facility_service.search("hospital i Musanze").results]
+
+    assert "Ruli Sector" not in names
+    assert "Ruhengeri Referral Hospital" in names
+
+
+def test_a_follow_up_takes_the_place_and_type_from_the_patients_own_turns(facilities):
+    """"i need one near me" after "which health centre?" means a health centre in
+    the district the patient named, not another mixed list."""
+    history = [
+        {"role": "user", "content": "list health centres in Musanze"},
+        {"role": "assistant", "content": "Care facilities in Musanze:\n- Kinigi Health Centre (Health Centre, Kinigi, Musanze) [1]"},
+        {"role": "user", "content": "am at Musanze which health centre near me?"},
+        {"role": "assistant", "content": "Care facilities in Musanze:\n- Kinigi Health Centre (Health Centre, Kinigi, Musanze) [1]"},
+    ]
+
+    result = AIService()._facility_result("i need one near me", history)
+
+    assert result is not None
+    assert result["reply"].startswith("Care facilities in Musanze (from your earlier message):")
+    assert "Ruhengeri Referral Hospital" not in result["reply"]
+    assert [source["name"] for source in result["sources"]] == ["Kinigi Health Centre"]
+    assert "Share your location" in result["recommended_next_step"]
+
+
+def test_place_names_inside_an_earlier_answer_do_not_anchor_the_next_question(facilities):
+    """Live bug: the assistant's list contained "Coko Health Centre" and
+    "Rwankuba health centre", and the next question was headed "near Coko,
+    Rwankuba" instead of the Gakenke the patient had typed."""
+    history = [
+        {"role": "user", "content": "health centres in Musanze"},
+        {"role": "assistant", "content": "The nearest one is on the hill in Gishaki."},
+    ]
+
+    result = AIService()._facility_result("i need one near me", history)
+
+    assert result is not None
+    assert result["reply"].startswith("Care facilities in Musanze (from your earlier message):")

@@ -16,21 +16,28 @@ from knowledge.models import AdminPlace, HealthFacility
 
 # The facility type a patient asked for, in the three languages the app answers in.
 KIND_WORDS: Dict[str, Tuple[str, ...]] = {
-    "hospital": ("hospital", "hopital", "hôpital", "ibitaro", "referral hospital", "teaching hospital"),
-    "health_center": ("health centre", "health center", "ivuriro", "vuriro"),
-    "health_post": ("health post", "poste de sante", "poste de santé"),
+    "hospital": (
+        "hospital", "hopital", "hôpital", "hôpitaux", "hopitaux", "ibitaro",
+        "referral hospital", "teaching hospital",
+    ),
+    # The accents are optional in every French phrase a patient types on a phone.
+    "health_center": (
+        "health centre", "health center", "ivuriro", "vuriro",
+        "centre de sante", "centre de santé", "centres de sante", "centres de santé",
+    ),
+    "health_post": ("health post", "poste de sante", "poste de santé", "postes de sante", "postes de santé"),
     # "umuganga" (doctor) and "umutanga" (provider) name a person, not a place:
     # a symptom question asking when to see one must reach the model instead.
-    "clinic": ("clinic", "clinique", "polyclinique", "policlinique", "kliniki"),
-    "pharmacy": ("pharmacy", "pharmacie", "farumasi", "drugstore", "drug store"),
+    "clinic": ("clinic", "clinique", "cliniques", "polyclinique", "policlinique", "kliniki", "dispensaire", "dispensaires"),
+    "pharmacy": ("pharmacy", "pharmacie", "pharmacies", "farumasi", "drugstore", "drug store"),
 }
 
 # Words that mean "closest to me", which is a ranking request, not a type.
 # "egereye" is the stem of "rinyegereye" / "byegereye" / "cyegereye" (near it).
 NEARBY_WORDS = (
-    "near", "nearby", "nearest", "close to", "closest",
+    "near", "nearby", "nearest", "close to", "closest", "around",
     "hafi", "kuruta", "egereye",
-    "proximité", "proximite",
+    "proximité", "proximite", "près de", "pres de", "proche", "alentour",
 )
 
 # Kinyarwanda "where is" / "which is" question words that precede a facility type.
@@ -87,10 +94,14 @@ TYPE_PRIORITY = {
 
 # OpenStreetMap maps what a surveyor saw, not what a patient can use: a primary
 # school, an electricity office and a church hall carry amenity=hospital here.
-# 6 of the 1333 rows match, and an admin can deactivate any row instead.
+# 7 of the 1333 rows match, and an admin can deactivate any row instead.
 NOT_A_FACILITY = re.compile(
     r"school|nursery|church|mosque|stadium|airport|bank|market|"
-    r"electricity|electricite|électricité|sector office|edf",
+    r"electricity|electricite|électricité|sector office|edf|"
+    # OSM files a sector itself as a hospital next to the district hospital it
+    # shares coordinates with ("Ruli Sector"): a name that ends in "sector" is an
+    # address, not a place to send a patient.
+    r"sector\s*$",
     re.I,
 )
 
@@ -452,7 +463,7 @@ def _centroid(facilities) -> Optional[Tuple[float, float]]:
     )
 
 
-def _maps_url(facility: HealthFacility) -> str:
+def maps_url(facility: HealthFacility) -> str:
     query = (
         f"{facility.latitude},{facility.longitude}"
         if facility.latitude is not None
@@ -472,7 +483,7 @@ def _row(facility: HealthFacility, distance: Optional[float]) -> Dict[str, Any]:
         "latitude": float(facility.latitude) if facility.latitude is not None else None,
         "longitude": float(facility.longitude) if facility.longitude is not None else None,
         "distance_km": round(distance, 1) if distance is not None else None,
-        "maps_url": _maps_url(facility),
+        "maps_url": maps_url(facility),
     }
 
 
@@ -499,9 +510,17 @@ def search(
     latitude: Optional[float] = None,
     longitude: Optional[float] = None,
     limit: int = 6,
+    kind: Optional[str] = None,
 ) -> FacilitySearch:
-    """Rank facilities for a free-text question, by distance when we have one."""
-    found = FacilitySearch(kind=asked_kind(text))
+    """Rank facilities for a free-text question.
+
+    A place the patient names is the anchor even when the device also sent a fix:
+    "health centres in Gakenke" must not be reordered by a phone that is 30 km
+    away from Gakenke, and the distances printed would be measured from a point
+    the patient never named. Coordinates anchor only a search with no place in it.
+    """
+    found = FacilitySearch(kind=kind or asked_kind(text))
+
     areas = _areas_for(text)
     if areas:
         labels = list(dict.fromkeys(area.label for area in areas))
@@ -518,7 +537,7 @@ def search(
         ]
         if narrower:
             found.locality = ", ".join(dict.fromkeys(narrower))
-    if latitude is not None and longitude is not None:
+    if latitude is not None and longitude is not None and not areas:
         found.coordinates = (float(latitude), float(longitude))
 
     if not found.anchored:

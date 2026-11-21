@@ -9,7 +9,7 @@ from core.constants import UrgencyLevel
 from core.exceptions import AIServiceError, AIResponseTruncatedError
 from core.glossary import requests_english, requests_kinyarwanda
 from knowledge.services import RetrievalService
-from knowledge.services import facility_service
+from knowledge.services import facility_intents, facility_service
 
 from ..providers import get_llm_provider
 from .prompts import (
@@ -29,6 +29,33 @@ FACILITY_TYPE_LABELS_RW = {
     "clinic": "Kliniki",
     "pharmacy": "Farumasi",
     "other": "Ahantu ho kuvurirwa",
+}
+
+FACILITY_TYPE_LABELS_FR = {
+    "hospital": "hôpital",
+    "health_center": "centre de santé",
+    "health_post": "poste de santé",
+    "clinic": "clinique",
+    "pharmacy": "pharmacie",
+    "other": "établissement de soins",
+}
+
+# The register spells the provinces out, which reads as dataset vocabulary in a
+# Kinyarwanda or French sentence; the answer uses the name the patient's language
+# would use and keeps the register's value for filtering.
+PROVINCE_PHRASES_RW = {
+    "Kigali City": "mu mujyi wa Kigali",
+    "Northern Province": "mu ntara y'Amajyaruguru",
+    "Southern Province": "mu ntara y'Amajyepfo",
+    "Eastern Province": "mu ntara y'Iburasirazuba",
+    "Western Province": "mu ntara y'Iburengerazuba",
+}
+PROVINCE_PHRASES_FR = {
+    "Kigali City": "la ville de Kigali",
+    "Northern Province": "la province du Nord",
+    "Southern Province": "la province du Sud",
+    "Eastern Province": "la province de l'Est",
+    "Western Province": "la province de l'Ouest",
 }
 
 CONVERSATION_SCHEMA = {
@@ -154,6 +181,28 @@ _KINYARWANDA_PARTICLES = {
     "ndetse", "cyangwa", "ariko", "kuko", "nuko", "niba", "ubwo", "kugira",
     "mwebwe", "bose", "twese", "muri", "mwe"
 }
+
+# French words that Kinyarwanda does not use, so a French question is not sent
+# into the Kinyarwanda branch by a shared particle ("se" is both languages).
+_FRENCH_KEYWORDS = {
+    "quel", "quelle", "quels", "quelles", "où", "ou", "santé", "sante",
+    "hôpital", "hopital", "hôpitaux", "hopitaux", "centre", "centres",
+    "traitement", "traitements", "trouve", "trouver", "situe", "situé",
+    "située", "localise", "localisé", "itinéraire", "itineraire",
+    "vous", "votre", "vos", "nous", "notre", "besoin", "voudrais",
+    "cherche", "merci", "bonjour", "secteur", "secteurs", "dispensaire",
+    "clinique", "pharmacie", "médecin", "medecin", "dans", "avec",
+    "pour", "comment", "pourquoi", "combien", "est", "sont", "n'est",
+    "j'ai", "je", "au", "aux", "près", "pres",
+    # Question and request wording a French sentence uses that English does not
+    "que", "qui", "quoi", "quand", "le", "la", "les", "des", "une", "un",
+    "sur", "sous", "pas", "ne", "cette", "ces", "mon", "ma", "mes",
+    "offre", "offrent", "propose", "proposent", "fournit", "fournissent",
+    "service", "services", "prestation", "prestations", "aller", "vais",
+    "rendre", "vers", "puis", "puis-je",
+}
+
+_FRENCH_LETTERS = set("àâäçéèêëîïôöùûüœ")
 
 
 class AIService:
@@ -1237,8 +1286,8 @@ class AIService:
 
     def _detect_language(self, text: str, history: Optional[List[Dict[str, str]]] = None) -> str:
         """
-        Return the conversation language ('rw', 'en', or 'mixed') using intent analysis,
-        vocabulary matching, morphology, and dialogue history.
+        Return the conversation language ('rw', 'en', 'fr', or 'mixed') using intent
+        analysis, vocabulary matching, morphology, and dialogue history.
         """
         clean_text = (text or "").strip()
         if not clean_text:
@@ -1257,8 +1306,14 @@ class AIService:
 
         rw_score = 0.0
         en_score = 0.0
+        fr_score = 0.0
 
         for position, word in enumerate(words):
+            if any(letter in _FRENCH_LETTERS for letter in word):
+                fr_score += 1.0
+            if word in _FRENCH_KEYWORDS:
+                fr_score += 1.5
+
             # Exact match against Kinyarwanda vocabulary
             if word in _KINYARWANDA_KEYWORDS:
                 rw_score += 2.0
@@ -1282,9 +1337,13 @@ class AIService:
                 len(word) >= 4
                 and not named
                 and word.startswith((
-                    "nd", "rw", "nsh", "bw", "cy", "ny", "kw", "gw", "tuk", "mub",
+                    # "rw" and "ny" are left out on purpose: Rwankeri, Rwamagana,
+                    # Nyabihu and Nyagatare are place names, and a patient who
+                    # types them in lower case should not get a Kinyarwanda answer
+                    # to an English question.
+                    "nd", "nsh", "bw", "cy", "kw", "gw", "tuk", "mub",
                     "nak", "bik", "big", "bim", "bir", "bak", "bag", "bam", "bar",
-                    "tug", "tuk", "tur", "kug", "kur", "gug", "gur", "ura", "ira", "bira",
+                    "tug", "tur", "kug", "kur", "gug", "gur", "ura", "ira", "bira",
                     "mur", "mwa", "bwa", "ntab", "sind", "simf"
                 ))
                 and not self._is_english_word(word)
@@ -1294,6 +1353,12 @@ class AIService:
 
             if self._is_english_word(word):
                 en_score += 1.0
+
+        # French wins only when its own markers outnumber the other languages: the
+        # two share words ("se", "centre"), and a Kinyarwanda sentence containing
+        # one of them must stay Kinyarwanda.
+        if fr_score >= 2.0 and fr_score > max(rw_score, en_score):
+            return "fr"
 
         # Code-switching detection (mixed Kinyarwanda & English)
         if rw_score >= 2.0 and en_score >= 2.0:
@@ -1322,6 +1387,25 @@ class AIService:
                         return "rw"
 
         return "rw" if rw_score > 0 else "en"
+
+    def _answer_language(self, message: str, history: Optional[List[Dict[str, str]]] = None) -> str:
+        """The language to write an answer in: 'rw', 'fr' or 'en'.
+
+        "mixed" describes the question, not the answer. A Kinyarwanda question
+        that borrows English place and facility words ("Rwankeri Health Center
+        iherereye he?") is still a Kinyarwanda question, so it gets a
+        Kinyarwanda answer.
+        """
+        language = self._detect_language(message, history)
+        if language != "mixed":
+            return language
+        words = {
+            word.strip("?,.!;:\"'()[]{}").lower()
+            for word in (message or "").split()
+        }
+        if words & (_KINYARWANDA_KEYWORDS | _KINYARWANDA_PARTICLES):
+            return "rw"
+        return "en"
 
     @staticmethod
     def _is_english_word(word: str) -> bool:
@@ -1375,21 +1459,399 @@ class AIService:
     FACILITY_ANSWER_LIMIT = 6
 
     # What to call the area the search settled on, beside the word the patient used.
+    # The tuple is (Kinyarwanda, English, French).
     FACILITY_AREA_LABELS = {
-        "sector": (" (mu murenge wa {name})", " ({name} Sector)"),
-        "district": (" (mu karere ka {name})", " ({name} District)"),
-        "province": (" (mu ntara ya {name})", " ({name})"),
+        "sector": (" (mu murenge wa {name})", " ({name} Sector)", " (secteur de {name})"),
+        "district": (" (mu karere ka {name})", " ({name} District)", " (district de {name})"),
+        "province": (" (mu ntara ya {name})", " ({name})", " ({name})"),
     }
+    AREA_LANGUAGE_SLOT = {"rw": 0, "en": 1, "fr": 2}
 
-    def _facility_area(self, found, rw: bool) -> str:
+    def _facility_area(self, found, language: str) -> str:
         if not found.place:
             return ""
         labels = self.FACILITY_AREA_LABELS.get(found.place_level or "")
         if not labels:
             # More than one area was searched, which happens when the name belongs
             # to two places and the message does not say which: say so plainly.
-            return " (hashakishijwe muri {})".format(found.place) if rw else f" (searched in {found.place})"
-        return (labels[0] if rw else labels[1]).format(name=found.place)
+            return {
+                "rw": f" (hashakishijwe muri {found.place})",
+                "fr": f" (recherche dans {found.place})",
+            }.get(language, f" (searched in {found.place})")
+        return labels[self.AREA_LANGUAGE_SLOT.get(language, 1)].format(name=found.place)
+
+    # --- Exact facility facts ------------------------------------------------
+    # "Which sector is Rwankeri Health Center in?" is a question about one
+    # facility, not a request for a list of places near it. These helpers answer
+    # it from the register's own columns and nothing else: the register is the
+    # only source allowed to state where a facility is, and it holds no services,
+    # so services are reported as not recorded rather than guessed.
+
+    TYPE_LABELS = {
+        "en": {
+            "hospital": "hospital",
+            "health_center": "health centre",
+            "health_post": "health post",
+            "clinic": "clinic",
+            "pharmacy": "pharmacy",
+            "other": "health facility",
+        },
+        "rw": {
+            "hospital": "ibitaro",
+            "health_center": "ivuriro",
+            "health_post": "ivuriro rito",
+            "clinic": "kliniki",
+            "pharmacy": "farumasi",
+            "other": "ikigo nderabuzima",
+        },
+        "fr": {
+            "hospital": "un hôpital",
+            "health_center": "un centre de santé",
+            "health_post": "un poste de santé",
+            "clinic": "une clinique",
+            "pharmacy": "une pharmacie",
+            "other": "un établissement de soins",
+        },
+    }
+
+    ADMIN_FIELD_LABELS = {
+        "en": {"sector": "sector", "district": "district", "province": "province"},
+        "rw": {"sector": "umurenge", "district": "akarere", "province": "intara"},
+        "fr": {"sector": "secteur", "district": "district", "province": "province"},
+    }
+
+    def _type_label(self, facility, language: str) -> str:
+        labels = self.TYPE_LABELS.get(language, self.TYPE_LABELS["en"])
+        return labels.get(facility.facility_type, labels["other"])
+
+    def _province_phrase(self, province: str, language: str) -> str:
+        if language == "rw":
+            return PROVINCE_PHRASES_RW.get(province, f"mu ntara ya {province}")
+        if language == "fr":
+            return PROVINCE_PHRASES_FR.get(province, f"la province de {province}")
+        return province
+
+    def _entity_place_chain(self, facility, language: str) -> str:
+        """The register's location, joined the way the language joins it."""
+        parts = []
+        if facility.sector:
+            parts.append(
+                f"mu murenge wa {facility.sector}" if language == "rw"
+                else f"dans le secteur de {facility.sector}" if language == "fr"
+                else f"{facility.sector} Sector"
+            )
+        if facility.district:
+            parts.append(
+                f"mu karere ka {facility.district}" if language == "rw"
+                else f"dans le district de {facility.district}" if language == "fr"
+                else f"{facility.district} District"
+            )
+        if facility.province:
+            if language == "fr":
+                parts.append(f"dans {self._province_phrase(facility.province, language)}")
+            elif language == "rw":
+                parts.append(self._province_phrase(facility.province, language))
+            else:
+                parts.append(facility.province)
+        return ", ".join(parts)
+
+    def _entity_location_phrase(self, facility, language: str) -> str:
+        chain = self._entity_place_chain(facility, language)
+        if not chain:
+            return ""
+        # French already carries "dans" on each part; iherereye takes the bare
+        # "mu ..." chain; English needs one "in" in front of the whole list.
+        return chain if language in ("rw", "fr") else f"in {chain}"
+
+    def _location_sentence(self, facility, language: str) -> str:
+        location = self._entity_location_phrase(facility, language)
+        if not location:
+            return {
+                "rw": f"Ububiko bw'amavuriro ntibwandika aho {facility.name} iherereye.",
+                "fr": f"Le registre des établissements n'indique pas où se trouve {facility.name}.",
+            }.get(
+                language,
+                f"The facility register does not record where {facility.name} is located.",
+            )
+        return {
+            "rw": f"{facility.name} iherereye {location}.",
+            "fr": f"{facility.name} se trouve {location}.",
+        }.get(language, f"{facility.name} is {location}.")
+
+    def _missing_field_sentence(self, facility, field: str, language: str) -> str:
+        label = self.ADMIN_FIELD_LABELS.get(language, self.ADMIN_FIELD_LABELS["en"])[field]
+        if language == "rw":
+            return f"Ububiko bw'amavuriro ntibwandika {label} ya {facility.name}."
+        if language == "fr":
+            return f"Le registre des établissements n'indique pas le {label} de {facility.name}."
+        return f"The facility register does not record the {label} for {facility.name}."
+
+    def _entity_fact_sentence(self, facility, question, language: str) -> str:
+        intent = question.intent
+        if intent in facility_intents.ADMIN_FIELDS:
+            field = facility_intents.ADMIN_FIELDS[intent]
+            value = getattr(facility, field)
+            if not value:
+                return self._missing_field_sentence(facility, field, language)
+            if language == "rw":
+                return {
+                    "sector": f"{facility.name} iherereye mu murenge wa {value}.",
+                    "district": f"{facility.name} iherereye mu karere ka {value}.",
+                    "province": f"{facility.name} iherereye {self._province_phrase(value, language)}.",
+                }[field]
+            if language == "fr":
+                return {
+                    "sector": f"{facility.name} se trouve dans le secteur de {value}.",
+                    "district": f"{facility.name} se trouve dans le district de {value}.",
+                    "province": f"{facility.name} se trouve dans {self._province_phrase(value, language)}.",
+                }[field]
+            return {
+                "sector": f"{facility.name} is in {value} Sector.",
+                "district": f"{facility.name} is in {value} District.",
+                "province": f"{facility.name} is in {value}.",
+            }[field]
+
+        location = self._entity_location_phrase(facility, language)
+        if intent == facility_intents.INTENT_SERVICES:
+            label = self._type_label(facility, language)
+            if language == "rw":
+                return (
+                    f"Ububiko bw'amavuriro ntibwandika serivisi zitangwa na {facility.name}. "
+                    f"Bwandika gusa ko ari {label} {location}; hamagara ikigo kugira ngo "
+                    "wemeze serivisi mbere yo kugenda."
+                )
+            if language == "fr":
+                return (
+                    f"Le registre des établissements n'indique pas les services fournis par "
+                    f"{facility.name}. Il l'enregistre comme {label} {location} ; contactez "
+                    "l'établissement pour confirmer les services avant de vous déplacer."
+                )
+            return (
+                f"The facility register does not record which services {facility.name} "
+                f"provides. It records {facility.name} as a {label} {location}; contact the "
+                "facility to confirm its services before travelling."
+            )
+
+        if intent == facility_intents.INTENT_DIRECTIONS:
+            if not location:
+                return {
+                    "rw": f"Ububiko ntibwandika aho {facility.name} iherereye; kanda kuri link y'ikarita hepfo ushakishe izina ryayo.",
+                    "fr": f"Le registre n'indique pas où se trouve {facility.name} ; ouvrez le lien de la carte ci-dessous pour chercher son nom.",
+                }.get(
+                    language,
+                    f"The register does not record where {facility.name} is; use the map "
+                    "link below to search for its name.",
+                )
+            if language == "rw":
+                return (
+                    f"{facility.name} iherereye {location}. Kanda kuri link y'ikarita hepfo "
+                    "kugira ngo ubone inzira yaho."
+                )
+            if language == "fr":
+                return (
+                    f"{facility.name} se trouve {location}. Ouvrez le lien de la carte "
+                    "ci-dessous pour l'itinéraire."
+                )
+            return (
+                f"{facility.name} is {location}. Open the map link below for directions."
+            )
+
+        if intent == facility_intents.INTENT_EXPLANATION:
+            label = self._type_label(facility, language)
+            if language == "rw":
+                return (
+                    f"{facility.name} ni {label} {location}. Ububiko ntibwandika serivisi "
+                    "cyangwa nimero za telefoni z'ikigo."
+                )
+            if language == "fr":
+                return (
+                    f"{facility.name} est {label} {location}. Le registre ne contient pas "
+                    "d'autres détails, comme les services ou les contacts."
+                )
+            return (
+                f"{facility.name} is a {label} {location}. The register holds no further "
+                "details, such as services or contacts."
+            )
+
+        return self._location_sentence(facility, language)
+
+    def _entity_type_note(self, question, facilities, language: str) -> str:
+        """Say so when the register's row is a different type from the patient's word."""
+        if not question.kind or len(facilities) != 1:
+            return ""
+        facility = facilities[0]
+        if facility.facility_type == question.kind:
+            return ""
+        actual = self._type_label(facility, language)
+        asked = self.TYPE_LABELS.get(language, self.TYPE_LABELS["en"]).get(
+            question.kind, question.kind
+        )
+        if language == "rw":
+            return f"Ububiko buvuga ko ari {actual}, ntabwo ari {asked}."
+        if language == "fr":
+            return f"Le registre le classe comme {actual}, et non comme {asked}."
+        return f"The register lists it as a {actual}, not as a {asked}."
+
+    def _entity_next_step(self, question, language: str) -> str:
+        intent = question.intent
+        if intent == facility_intents.INTENT_SERVICES:
+            return {
+                "rw": "Hamagara ikigo wemeze serivisi zacyo mbere yo kugenda.",
+                "fr": "Contactez l'établissement pour confirmer ses services.",
+            }.get(language, "Contact the facility to confirm its services.")
+        if intent == facility_intents.INTENT_DIRECTIONS:
+            return {
+                "rw": "Kanda kuri link y'ikarita ubone inzira yaho.",
+                "fr": "Ouvrez le lien de la carte pour l'itinéraire.",
+            }.get(language, "Open the map link for directions.")
+        return {
+            "rw": "Ubaza ubundi busobanuro bw'ikigo, nka serivisi cyangwa inzira, ndabikubwira.",
+            "fr": "Demandez un autre détail sur l'établissement, comme ses services ou l'itinéraire.",
+        }.get(
+            language,
+            "Ask for another verified detail about this facility, such as its services or directions.",
+        )
+
+    def _entity_lookup_result(self, question, lookup, message: str, language: str) -> Dict[str, Any]:
+        facilities = lookup.facilities
+        sentences = [self._entity_fact_sentence(facility, question, language) for facility in facilities]
+        if len(sentences) > 1:
+            sentences = [f"- {sentence}" for sentence in sentences]
+        reply = "\n\n".join(sentences)
+        note = self._entity_type_note(question, facilities, language)
+        if note:
+            reply += "\n\n" + note
+
+        symptoms = self._extract_symptoms_from_text(message)
+        warning_signs = self._check_warning_signs(message, symptoms)
+        urgency_level = self._enforce_urgency_floor(
+            self._determine_urgency(message, symptoms), warning_signs
+        )
+        if warning_signs:
+            warning = " ".join(warning_signs)
+            if language == "rw":
+                reply = f"Ibi bimenyetso bisaba kwa muganga ako kanya: {warning}\n\n{reply}"
+            elif language == "fr":
+                reply = f"Ces symptômes nécessitent des soins d'urgence immédiats : {warning}\n\n{reply}"
+            else:
+                reply = f"These symptoms need emergency care now: {warning}\n\n{reply}"
+
+        sources = [
+            {
+                "index": index,
+                "name": facility.name,
+                "title": facility.name,
+                "url": facility_service.maps_url(facility),
+            }
+            for index, facility in enumerate(facilities, 1)
+        ]
+        return {
+            "reply": reply,
+            "symptoms_identified": symptoms,
+            "follow_up_questions": [],
+            "possible_conditions": [],
+            "warning_signs": warning_signs,
+            "urgency_level": urgency_level,
+            "general_information": "",
+            "medication_information": [],
+            "recommended_next_step": self._entity_next_step(question, language),
+            "sources": sources,
+            "model_used": "health_facility_register",
+            "confidence": 1.0,
+            "evidence": [],
+        }
+
+    def _unverified_entity_result(
+        self, question, message: str, language: str, lookup=None
+    ) -> Dict[str, Any]:
+        """The honest answer when the register cannot confirm the fact asked for."""
+        if lookup is not None and lookup.facilities:
+            facility = lookup.facilities[0]
+            field = facility_intents.ADMIN_FIELDS.get(question.intent)
+            if field:
+                reply = self._missing_field_sentence(facility, field, language)
+            else:
+                reply = self._location_sentence(facility, language)
+            follow_up = ""
+        else:
+            asked = facility_intents.display_name(message) or "that facility"
+            reply = {
+                "rw": (
+                    f"Ntabwo nshobora kwemeza ko hari ikigo cyitwa \"{asked}\" mu bubiko "
+                    "bw'amavuriro. Mbwira umurenge cyangwa akarere kirimo, cyangwa reba "
+                    "ukuntu cyanditse, maze ngire ubikubwire."
+                ),
+                "fr": (
+                    f"Je ne peux pas vérifier un établissement nommé \"{asked}\" dans le "
+                    "registre. Indiquez son secteur ou son district, ou vérifiez "
+                    "l'orthographe, et je regarderai à nouveau."
+                ),
+            }.get(
+                language,
+                f"I cannot verify a facility named \"{asked}\" in the facility register. "
+                "Tell me its sector or district, or check the spelling, and I will look again.",
+            )
+            follow_up = {
+                "rw": "Kiri mu murenge cyangwa akarere kahe?",
+                "fr": "Dans quel secteur ou district se trouve-t-il ?",
+            }.get(language, "Which sector or district is it in?")
+
+        symptoms = self._extract_symptoms_from_text(message)
+        warning_signs = self._check_warning_signs(message, symptoms)
+        urgency_level = self._enforce_urgency_floor(
+            self._determine_urgency(message, symptoms), warning_signs
+        )
+        return {
+            "reply": reply,
+            "symptoms_identified": symptoms,
+            "follow_up_questions": [follow_up] if follow_up else [],
+            "possible_conditions": [],
+            "warning_signs": warning_signs,
+            "urgency_level": urgency_level,
+            "general_information": "",
+            "medication_information": [],
+            "recommended_next_step": {
+                "rw": "Vuga umurenge, akarere cyangwa izina ry'ikigo nk'uko ryanditse.",
+                "fr": "Indiquez le secteur, le district ou le nom exact de l'établissement.",
+            }.get(
+                language,
+                "Name the sector, district, or the facility's exact name so I can verify it.",
+            ),
+            "sources": [],
+            "model_used": "health_facility_register",
+            "confidence": 0.5,
+            "evidence": [],
+        }
+
+    def _entity_answer(
+        self, question, message: str, history: List[Dict[str, str]]
+    ) -> Dict[str, Any]:
+        """Answer one exact fact about the facility the patient named."""
+        # A correction is answered about the facility from the patient's earlier
+        # turn unless this sentence names one after a real type word; otherwise
+        # the correction's own grammar could prefix an unrelated facility name.
+        lookup = facility_intents.resolve_entity(
+            message, question.kind, typed_only=question.correction
+        )
+        if lookup is None and question.correction:
+            lookup = facility_intents.resolve_entity_from_history(history)
+        language = self._answer_language(message, history)
+        if lookup is None:
+            return self._unverified_entity_result(question, message, language)
+        answer = self._entity_lookup_result(question, lookup, message, language)
+        accepted = ()
+        if question.admin_field == "province":
+            accepted = tuple(
+                self._province_phrase(facility.province, language)
+                for facility in lookup.facilities
+                if facility.province
+            )
+        # Never return a file-derived fact the reply does not actually contain.
+        if facility_intents.validate_entity_answer(
+            answer["reply"], question, lookup.facilities, accepted
+        ):
+            return answer
+        return self._unverified_entity_result(question, message, language, lookup=lookup)
 
     def _facility_result(
         self,
@@ -1405,6 +1867,12 @@ class AIService:
         cannot turn it into boilerplate. Returns None for anything that is not a
         place question with a place to anchor it to.
         """
+        # Read the intent before the facility-word gate: "No, that is not what I
+        # asked. I want the sector." names no facility type and would otherwise be
+        # handed to the model, which is how the same wrong answer got repeated.
+        question = facility_intents.classify(message)
+        if question is not None and question.entity_intent:
+            return self._entity_answer(question, message, history)
         if not facility_service.mentions_facility(message):
             # Deciding that needs no database: a message about symptoms has no
             # business reading the place hierarchy and the facility table.
@@ -1420,7 +1888,13 @@ class AIService:
         # Contextual place resolution: when a patient refers to "this district",
         # "that sector", "there", etc., carry the place from earlier turns so
         # device GPS coordinates do not clobber the user's intended location.
+        #
+        # Only the patient's own turns are read. An assistant reply lists facility
+        # names that are also place names ("Coko Health Centre", "Rwankuba health
+        # centre"), and anchoring the next question on those sends the search to a
+        # hill the patient never mentioned.
         search_message = message
+        carried_place = False
         has_demonstrative = any(
             d in message.lower()
             for d in (
@@ -1431,14 +1905,29 @@ class AIService:
         )
         if has_demonstrative or not facility_service.resolve_places(message):
             for turn in reversed(history or []):
+                if turn.get("role") != "user":
+                    continue
                 content = turn.get("content") or ""
                 places = facility_service.resolve_places(content)
                 if places:
                     search_message = f"{message} {' '.join(p.name for p in places)}"
+                    carried_place = True
+                    break
+
+        # "i need one near me" after "which health centre?" is still asking for a
+        # health centre: the type comes from the patient's earlier words too, and
+        # never from the assistant's list, which names every type it found.
+        kind = facility_service.asked_kind(message)
+        if kind is None:
+            for turn in reversed(history or []):
+                if turn.get("role") != "user":
+                    continue
+                kind = facility_service.asked_kind(turn.get("content") or "")
+                if kind:
                     break
 
         found = facility_service.search(
-            search_message, latitude, longitude, limit=self.FACILITY_ANSWER_LIMIT
+            search_message, latitude, longitude, limit=self.FACILITY_ANSWER_LIMIT, kind=kind
         )
         if not found.has_results and facility_service.is_facility_question(message):
             # "and the closest one?" carries its place from an earlier turn.
@@ -1447,6 +1936,7 @@ class AIService:
                 latitude,
                 longitude,
                 limit=self.FACILITY_ANSWER_LIMIT,
+                kind=kind,
             )
         if not found.has_results:
             if not found.anchored and facility_service.asks_for_nearby(message):
@@ -1456,11 +1946,18 @@ class AIService:
                 return self._need_location_result(message, history)
             return None
 
-        rw = self._detect_language(message, history) == "rw"
+        language = self._answer_language(message, history)
+        rw = language == "rw"
+        fr = language == "fr"
         lines = []
         sources = []
         for index, row in enumerate(found.results, 1):
-            label = FACILITY_TYPE_LABELS_RW.get(row["type"], row["type_display"]) if rw else row["type_display"]
+            if rw:
+                label = FACILITY_TYPE_LABELS_RW.get(row["type"], row["type_display"])
+            elif fr:
+                label = FACILITY_TYPE_LABELS_FR.get(row["type"], row["type_display"])
+            else:
+                label = row["type_display"]
             location = ", ".join(bit for bit in (row["sector"], row["district"]) if bit)
             details = ", ".join(
                 bit
@@ -1480,38 +1977,72 @@ class AIService:
             # The patient named a cell or village; the list is the area around it.
             # Say both: someone in Nyabugogo scanning for "Gasabo" is not helped by
             # either word alone, and a widened search should be visible.
-            area = self._facility_area(found, rw)
-            intro = (
-                f"Ahantu ho kuvurirwa hafi ya {found.locality}{area}:"
-                if rw
-                else f"Care facilities near {found.locality}{area}:"
-            )
+            area = self._facility_area(found, language)
+            if rw:
+                intro = f"Ahantu ho kuvurirwa hafi ya {found.locality}{area}:"
+            elif fr:
+                intro = f"Établissements de soins près de {found.locality}{area} :"
+            else:
+                intro = f"Care facilities near {found.locality}{area}:"
         elif found.place:
-            intro = (
-                f"Amavuriro n'ibitaro biri i {found.place}:"
-                if rw
-                else f"Care facilities in {found.place}:"
-            )
+            # A follow-up that did not restate its place reuses the one the patient
+            # gave earlier; saying so shows why the list repeats rather than reads
+            # as not having listened.
+            carried = ""
+            if carried_place:
+                carried = (
+                    " (nkurikije aho wambwiye ko uri)" if rw
+                    else " (d'après votre message précédent)" if fr
+                    else " (from your earlier message)"
+                )
+            if rw:
+                intro = f"Amavuriro n'ibitaro biri i {found.place}{carried}:"
+            elif fr:
+                intro = f"Établissements de soins à {found.place}{carried} :"
+            else:
+                intro = f"Care facilities in {found.place}{carried}:"
         else:
-            intro = (
-                "Ahantu ho kuvurirwa hafi yanyu:"
-                if rw
-                else "The facilities closest to you:"
-            )
-        closing = (
-            "Kanda kuri nomero kugira ngo ubone inzira yaho."
-            if rw
-            else "Select a number to open directions to any of them."
-        )
+            if rw:
+                intro = "Ahantu ho kuvurirwa hafi yanyu:"
+            elif fr:
+                intro = "Les établissements les plus proches de vous :"
+            else:
+                intro = "The facilities closest to you:"
+        if rw:
+            closing = "Kanda kuri nomero kugira ngo ubone inzira yaho."
+        elif fr:
+            closing = "Sélectionnez un numéro pour ouvrir l'itinéraire vers l'un d'eux."
+        else:
+            closing = "Select a number to open directions to any of them."
         next_step = closing
-        if found.locality and not found.coordinates:
-            # The neighbourhood was resolved to the district holding it, so the
-            # list is that district's, not ordered by distance: say what would.
-            next_step = (
-                "Nyamuneka wohereze location yawe kugira ngo dutangire n'iriri hafi kurusha ayandi."
-                if rw
-                else "Share your location and I will put the closest one first."
-            )
+        if not found.coordinates and facility_service.asks_for_nearby(message):
+            # The patient asked for "near me" but the list is tied to the place they
+            # named, so no distance was measured. Say what would measure one, rather
+            # than let a "near me" answer look unordered for no reason. If the device
+            # did send a fix, do not ask for it again: a district is too coarse to
+            # rank from, so ask for the finer place instead.
+            sent_fix = latitude is not None and longitude is not None
+            if rw:
+                next_step = (
+                    "Vuga umurenge cyangwa akagari uriho kugira ngo dutangire "
+                    "n'iriri hafi kurusha ayandi."
+                    if sent_fix
+                    else "Nyamuneka wohereze location yawe kugira ngo dutangire "
+                    "n'iriri hafi kurusha ayandi."
+                )
+            elif fr:
+                next_step = (
+                    "Indiquez le secteur ou la cellule où vous êtes et je mettrai "
+                    "le plus proche en premier."
+                    if sent_fix
+                    else "Partagez votre position et je mettrai le plus proche en premier."
+                )
+            else:
+                next_step = (
+                    "Name the sector or cell you are in and I will put the closest one first."
+                    if sent_fix
+                    else "Share your location and I will put the closest one first."
+                )
 
         symptoms = self._extract_symptoms_from_text(message)
         warning_signs = self._check_warning_signs(message, symptoms)
@@ -1519,11 +2050,13 @@ class AIService:
             self._determine_urgency(message, symptoms), warning_signs
         )
         if warning_signs:
-            intro = (
-                "Ibi bimenyetso bisaba kwa muganga ako kanya: " + ", ".join(warning_signs)
-                if rw
-                else "These symptoms need emergency care now: " + ", ".join(warning_signs)
-            ) + "\n\n" + intro
+            if rw:
+                warning = "Ibi bimenyetso bisaba kwa muganga ako kanya: "
+            elif fr:
+                warning = "Ces symptômes nécessitent des soins d'urgence immédiats : "
+            else:
+                warning = "These symptoms need emergency care now: "
+            intro = warning + ", ".join(warning_signs) + "\n\n" + intro
 
         return {
             "reply": intro + "\n\n" + "\n".join(lines) + "\n\n" + closing,
@@ -1545,7 +2078,8 @@ class AIService:
         self, message: str, history: List[Dict[str, str]]
     ) -> Dict[str, Any]:
         """Ask for the one fact a "near me" answer needs, and keep any triage."""
-        rw = self._detect_language(message, history) == "rw"
+        language = self._answer_language(message, history)
+        rw = language == "rw"
         if rw:
             reply = (
                 "Kugira ngo mbabonere aho mwakurira ubuvuzi hafi yanyu, mbwira aho uri: "
@@ -1554,6 +2088,14 @@ class AIService:
             )
             follow_up = "Utuye mu murenge uwuhe cyangwa mu karere kahe?"
             next_step = "Ohereza ahantu muri: umurenge, akagari cyangwa location."
+        elif language == "fr":
+            reply = (
+                "Pour trouver des soins près de vous, indiquez où vous êtes : le "
+                "secteur ou la cellule où vous vous trouvez. Vous pouvez aussi "
+                "partager votre position et je mettrai le plus proche en premier."
+            )
+            follow_up = "Dans quel secteur ou quelle cellule êtes-vous ?"
+            next_step = "Envoyez votre secteur, votre cellule ou votre position pour trier la liste par distance."
         else:
             reply = (
                 "To find care close to you, tell me where you are — the sector or the "
@@ -1569,11 +2111,13 @@ class AIService:
             self._determine_urgency(message, symptoms), warning_signs
         )
         if warning_signs:
-            reply = (
-                "Ibi bimenyetso bisaba kwa muganga ako kanya: " + ", ".join(warning_signs)
-                if rw
-                else "These symptoms need emergency care now: " + ", ".join(warning_signs)
-            ) + "\n\n" + reply
+            if rw:
+                warning = "Ibi bimenyetso bisaba kwa muganga ako kanya: "
+            elif language == "fr":
+                warning = "Ces symptômes nécessitent des soins d'urgence immédiats : "
+            else:
+                warning = "These symptoms need emergency care now: "
+            reply = warning + ", ".join(warning_signs) + "\n\n" + reply
 
         return {
             "reply": reply,
